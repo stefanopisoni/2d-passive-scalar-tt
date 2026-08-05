@@ -47,8 +47,7 @@ Only `torch`, `numpy`, `matplotlib`, `pandas`, `PyWavelets` are required.
 
 ### Tier 2 — recompute the statistics from the full dataset
 
-Requires the raw DNS snapshots and the precompressed TT fields (not shipped —
-they are large), plus the `tensnet` library. Point the code at them via
+Requires the raw DNS snapshots and the precompressed TT fields (`tensnet` library needed). Point the code at them via
 environment variables:
 
 ```bash
