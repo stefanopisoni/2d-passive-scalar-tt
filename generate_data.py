@@ -320,8 +320,7 @@ for config in configs_to_process:
 
 # %% Convert to hybrid with p=4
 
-# DOF formula for p=4: 2^N*bd + 4*(M-1)*bd^2 + 4*bd  (quadratic coeff=16 vs 20 for p=2),
-# so BD_REMAINING values are very close to the p=2 ones and are reused here.
+# Empirical counting of dof to estimate the best BD_REM.
 L = 12
 path = cfg.DATA_DIR
 
@@ -517,6 +516,15 @@ for BD_MAX in [100, 200, 500, 1000]:
 
 
 
+
+
+
+
+
+# Checks not needed to produce the figures in the paper.
+# Focus on 1D stats to understand the compression effects.
+
+# can be entirely skipped for paper purposes.
 
 # %% Statistics: SF and PDF of the increments
 L = 12
