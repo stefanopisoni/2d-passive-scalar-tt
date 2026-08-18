@@ -46,18 +46,32 @@ class Truncation:
     bd_remaining: int = None
     eps: float = None
     renormalize: bool = False
-    lost_norm2: float = 0.0       # cumulative squared l2 removed by truncation
+    track_loss: bool = False      # measuring the loss costs two norms per call
+    lost_norm2: float = 0.0       # cumulative squared l2 removed, ALL calls
     n_calls: int = 0
 
+    # WARNING: lost_norm2 aggregates every compression, and variable_rhs performs
+    # ~13 of them per RHS evaluation on *intermediates* (u * grad theta and
+    # friends) whose norms are those of the right-hand side, not of theta.  It is
+    # therefore NOT the numerical dissipation of the state and must not be
+    # compared with kappa <|grad theta|^2>: doing so overstates it by orders of
+    # magnitude (measured: 16.7x versus a true 0.002x).  Use
+    # numerical_dissipation() below, which reads the actual variance budget.
+
     def __call__(self, h):
-        before = ho.hybrid_norm(h)
+        # The two hybrid_norm calls needed to record the truncation loss cost
+        # ~17% of total runtime, so they are opt-in: enable track_loss when the
+        # dissipation budget is actually being measured, not for production runs.
+        need = self.track_loss or self.renormalize
+        before = ho.hybrid_norm(h) if need else 0.0
         out = ho.hybrid_compress(h, bd_first=self.bd_first,
                                  bd_remaining=self.bd_remaining, eps=self.eps)
-        after = ho.hybrid_norm(out)
-        self.lost_norm2 += max(before**2 - after**2, 0.0)
         self.n_calls += 1
-        if self.renormalize and after > 0:
-            out = ho.hybrid_scale(out, before / after)
+        if need:
+            after = ho.hybrid_norm(out)
+            self.lost_norm2 += max(before**2 - after**2, 0.0)
+            if self.renormalize and after > 0:
+                out = ho.hybrid_scale(out, before / after)
         return out
 
     def reset(self):
@@ -305,3 +319,154 @@ def evolve(h0, L: int, N: int, rhs_mpo, dt: float, n_steps: int,
             record(hist, i * dt, h, L, N, dense,
                    None if exact_fn is None else exact_fn(i * dt))
     return h, hist, dense
+
+
+# --------------------------------------------------------------------------
+# variable-coefficient transport
+# --------------------------------------------------------------------------
+def velocity_from_streamfunction(psi, L: int, N: int, dx: float,
+                                 coef: Dict[int, float] = None,
+                                 trunc: Callable = no_truncation):
+    """Build (ux, uy) = (d(psi)/dy, -d(psi)/dx) with the *discrete* operators.
+
+    Deriving the velocity from a streamfunction with the same stencils used by
+    the solver makes it divergence-free to round-off at the discrete level,
+
+        Dx ux + Dy uy = Dx Dy psi - Dy Dx psi = 0,
+
+    because Dx and Dy act on different axes and commute exactly.  Sampling
+    sin/cos analytically instead would leave a truncation-order divergence, and
+    the skew-symmetry that conserves scalar variance would then only hold
+    approximately.
+    """
+    coef = coef or hop.D1_CENTRAL_2
+    Dx = hop.derivative_mpo(L, hop.AXIS_X, coef, dx=dx)
+    Dy = hop.derivative_mpo(L, hop.AXIS_Y, coef, dx=dx)
+    ux = trunc(ho.hybrid_apply(Dy, psi, N))
+    uy = trunc(ho.hybrid_scale(ho.hybrid_apply(Dx, psi, N), -1.0))
+    return ux, uy
+
+
+def variable_rhs(ux, uy, L: int, N: int, dx: float, kappa: float = 0.0,
+                 form: str = "skew", adv_coef: Dict[int, float] = None,
+                 diff_coef: Dict[int, float] = None, forcing=None,
+                 compress_inner: bool = True,
+                 trunc: Callable = no_truncation) -> Callable:
+    """RHS of the passive scalar with a prescribed, space-dependent velocity.
+
+    ``form`` selects the discretisation of the transport term:
+
+    ``"advective"``     -u . grad(theta)
+    ``"conservative"``  -div(u theta)
+    ``"skew"``          the average of the two (default)
+
+    All three coincide in the continuum for incompressible u but not after
+    discretisation.  The skew form is the one that inherits the exact
+    antisymmetry of the continuous operator and therefore conserves
+    <theta^2> best; it is the standard choice for this reason.
+
+    Every intermediate is compressed: a Hadamard product multiplies bond
+    dimensions (chi_u * chi_theta), so leaving the stages uncompressed makes the
+    final sweep cost O(chi^3) on a bond dimension several hundred wide.
+    """
+    adv_coef = adv_coef or hop.D1_CENTRAL_2
+    diff_coef = diff_coef or hop.D2_CENTRAL_2
+    Dx = hop.derivative_mpo(L, hop.AXIS_X, adv_coef, dx=dx)
+    Dy = hop.derivative_mpo(L, hop.AXIS_Y, adv_coef, dx=dx)
+    lap = hop.laplacian_mpo(L, diff_coef, dx=dx) if kappa else None
+    if form not in ("advective", "conservative", "skew"):
+        raise ValueError(f"unknown form {form!r}")
+
+    # Compress after EVERY factor, never letting two rank-multiplying operations
+    # stack.  Applying D then multiplying by u without an intermediate compress
+    # peaks at r_D * chi_u * chi (12 chi here) instead of max(r_D, chi_u) * chi
+    # (4 chi); since the sweep costs O(chi^3) that is a ~27x difference.
+    # How often to compress inside the transport term. Compressing after every
+    # factor keeps the peak bond dimension at max(r_D, chi_u)*chi instead of
+    # r_D*chi_u*chi, but each call is a full two-sweep and the sweeps turn out to
+    # be dominated by per-call overhead rather than flops, so fewer-and-larger
+    # can win. Measured, not assumed; see the granularity comparison in the notes.
+    inner = trunc if compress_inner else (lambda z: z)
+
+    def advective(h):
+        a = inner(ho.hybrid_hadamard(ux, inner(ho.hybrid_apply(Dx, h, N))))
+        b = inner(ho.hybrid_hadamard(uy, inner(ho.hybrid_apply(Dy, h, N))))
+        return trunc(ho.hybrid_axpy(-1.0, a, -1.0, b))
+
+    def conservative(h):
+        a = inner(ho.hybrid_apply(Dx, inner(ho.hybrid_hadamard(ux, h)), N))
+        b = inner(ho.hybrid_apply(Dy, inner(ho.hybrid_hadamard(uy, h)), N))
+        return trunc(ho.hybrid_axpy(-1.0, a, -1.0, b))
+
+    def rhs(h):
+        if form == "advective":
+            t = advective(h)
+        elif form == "conservative":
+            t = conservative(h)
+        else:
+            t = trunc(ho.hybrid_axpy(0.5, advective(h), 0.5, conservative(h)))
+        if kappa:
+            t = trunc(ho.hybrid_axpy(1.0, t, kappa, ho.hybrid_apply(lap, h, N)))
+        if forcing is not None:
+            # without a source a passive scalar simply decays to nothing, so a
+            # sustained cascade -- the regime the statistics describe -- needs
+            # steady large-scale injection.
+            t = trunc(ho.hybrid_add(t, forcing))
+        return t
+    return rhs
+
+
+def dense_variable_rhs(ux: np.ndarray, uy: np.ndarray, dx: float,
+                       kappa: float = 0.0, form: str = "skew",
+                       adv_coef=None, diff_coef=None, forcing=None) -> Callable:
+    """Dense counterpart of :func:`variable_rhs`, same stencils and same form."""
+    adv_coef = adv_coef or hop.D1_CENTRAL_2
+    diff_coef = diff_coef or hop.D2_CENTRAL_2
+
+    def advective(f):
+        return -(ux * _apply_stencil_dense(f, adv_coef, hop.AXIS_X)
+                 + uy * _apply_stencil_dense(f, adv_coef, hop.AXIS_Y)) / dx
+
+    def conservative(f):
+        return -(_apply_stencil_dense(ux * f, adv_coef, hop.AXIS_X)
+                 + _apply_stencil_dense(uy * f, adv_coef, hop.AXIS_Y)) / dx
+
+    def rhs(f):
+        if form == "advective":
+            t = advective(f)
+        elif form == "conservative":
+            t = conservative(f)
+        else:
+            t = 0.5 * (advective(f) + conservative(f))
+        if kappa:
+            t = t + kappa * (_apply_stencil_dense(f, diff_coef, hop.AXIS_X)
+                             + _apply_stencil_dense(f, diff_coef, hop.AXIS_Y)) / dx**2
+        if forcing is not None:
+            t = t + forcing
+        return t
+    return rhs
+
+
+def numerical_dissipation(t, var_run, var_ref):
+    """Numerical dissipation from the variance budget: the *extra* variance decay.
+
+    ``var_run`` and ``var_ref`` are variance histories on the same times ``t``,
+    for the truncated run and for an essentially converged reference.  Returns
+    ``(d/dt <theta^2>_ref - d/dt <theta^2>_run)/2``, directly comparable with
+    :func:`scalar_dissipation`.
+
+    This is the trustworthy measurement.  Summing truncation losses instead
+    conflates the state with the right-hand-side intermediates.
+    """
+    t = np.asarray(t, dtype=float)
+    return (np.gradient(np.asarray(var_run), t)
+            - np.gradient(np.asarray(var_ref), t)) * -0.5
+
+
+def scalar_dissipation(f: np.ndarray, kappa: float, dx: float,
+                       coef: Dict[int, float] = None) -> float:
+    """Physical dissipation rate kappa * <|grad theta|^2> from the variance budget."""
+    coef = coef or hop.D1_CENTRAL_2
+    gx = _apply_stencil_dense(f, coef, hop.AXIS_X) / dx
+    gy = _apply_stencil_dense(f, coef, hop.AXIS_Y) / dx
+    return float(kappa * np.mean(gx**2 + gy**2))
