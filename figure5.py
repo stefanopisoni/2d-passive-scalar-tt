@@ -10,9 +10,10 @@ import config as cfg
 # This figure only reads precompressed hybrid fields (no spectral_tools / tensnet);
 # the raw/compressed data is needed only when PLOT_ONLY=False.
 
-# ── Publication style (match the REVTeX/PRL manuscript fonts) ──────────────────
-# This is a single-column figure (\columnwidth = 3.125 in with the manuscript's
-# revtex4-2 prl + geometry margin=1in). Authored at the true display width with
+# ── Publication style (match the REVTeX manuscript fonts) ─────────────────────
+# This figure spans the full text width of a SINGLE-COLUMN (one-column) article
+# (\textwidth = 6.5 in with geometry margin=1in on letterpaper), with the three
+# panels laid out side by side. Authored at the true display width with
 # Computer-Modern serif fonts and journal-sized text so labels/legends/titles
 # match the body text. Uses LaTeX rendering when latex+dvipng are available, and
 # falls back to matplotlib's Computer-Modern mathtext otherwise.
@@ -51,7 +52,7 @@ hyb_dir = cfg.HYB_DIR        # precompressed hybrid TT fields
 std_dir = cfg.STD_DIR        # precompressed standard TT fields
 stats_dir = cfg.STATS_DIR
 downsample = 1
-CHI_LIST = [75, 100, 200]               # one stacked panel per bond dimension
+CHI_LIST = [75, 100, 200]               # one panel per bond dimension
 N_LIST = [8, 12, 16]                    # hybrid dimension: p1 = 2^N
 p_list = [2, 4]                          # need p=2, p=4 for flatness S4/S2^2
 r_list = [2**i for i in range(12)]      # x-axis: scales (grid spacing)
@@ -172,23 +173,36 @@ else:
     df.to_csv(os.path.join(stats_dir, 'flatness_vs_N.csv'), index=False)
     print("Saved flatness_vs_N.csv")
 
-# ── Plotting (stacked single column: one panel per chi) ───────────────────────────
+# ── Plotting (one row of panels, one per chi) ─────────────────────────────────
 fig_dir = cfg.FIG_DIR
 os.makedirs(fig_dir, exist_ok=True)
 
 print("Generating figure5...")
-fig, axes = plt.subplots(len(CHI_LIST), 1, figsize=(3.125, 1.7 * len(CHI_LIST)),
-                         dpi=300, sharex=True, gridspec_kw={'hspace': 0})
+# ── Layout (hand-tunable) ─────────────────────────────────────────────────────
+# Three panels side by side across the full text width of a one-column article.
+FIG_WIDTH    = 6.5    # inches: \textwidth of the single-column layout
+FIG_HEIGHT   = 2.6    # inches: panel height (all three panels share it)
+PANEL_WPAD  = 1.2     # horizontal gap between panels, in font-size units
+                      # (applied by tight_layout, which overrides gridspec wspace)
+# Relative physical widths of the panels: a larger value makes that panel wider.
+panel_width_ratios = [1.0, 1.0, 1.0]
+
+fig, axes = plt.subplots(1, len(CHI_LIST), figsize=(FIG_WIDTH, FIG_HEIGHT),
+                         dpi=300, sharex=True,
+                         gridspec_kw={'width_ratios': panel_width_ratios})
 
 # Per-element keyword args (sizes/weights now come from rcParams above)
 label_kw  = dict()
-panel_kw  = dict(fontsize=9)
-legend_kw = dict(loc='upper right')
+# Panel label at 8 pt: the two-line rho <-> chi label is wider than a panel at 9 pt.
+panel_kw  = dict(fontsize=8)
+# Compact legend so the box stays clear of the curves in the narrow panels.
+legend_kw = dict(loc='upper right', handlelength=1.6, labelspacing=0.3,
+                 borderpad=0.3, handletextpad=0.5)
 
 r_arr = np.array(r_list, dtype=float)
 panel_letters = ['a', 'b', 'c', 'd', 'e', 'f']
 
-# Stacked, contiguous panels (one per bond dimension chi); shared x-axis at bottom.
+# Side-by-side panels (one per bond dimension chi); each keeps its own y-scale.
 for j, chi in enumerate(CHI_LIST):
     ax = axes[j]
 
@@ -210,17 +224,24 @@ for j, chi in enumerate(CHI_LIST):
     # Prune top/bottom y-ticks so labels don't collide at the shared panel edges.
     ax.yaxis.set_major_locator(MaxNLocator(nbins=4, prune='both'))
     # Panel label on top of the legend: equivalent CR <-> standard-TT bond dimension.
-    ax.text(0.985, 0.95,
-            rf'{panel_letters[j]}) $\rho={avg_cr[chi]*100:.2f}\%$ $\leftrightarrow$ '
-            rf'$\chi_{{\mathrm{{standard\ TT}}}}={chi}$',
-            transform=ax.transAxes, ha='right', va='top', **panel_kw)
+    # Split over two lines: the one-liner is wider than a panel at this width.
+    # (x, y) in axes fraction, hand-tunable per panel via `label_pos`.
+    label_pos = {0: (0.975, 0.97), 1: (0.975, 0.97), 2: (0.975, 0.97)}
+    lx, ly = label_pos[j]
+    ax.text(lx, ly,
+            rf'{panel_letters[j]}) $\rho={avg_cr[chi]*100:.2f}\%$' '\n'
+            rf'$\leftrightarrow \chi_{{\mathrm{{standard\ TT}}}}={chi}$',
+            transform=ax.transAxes, ha='right', va='top', linespacing=1.3, **panel_kw)
     ax.grid(True, which='both', alpha=0.3)
     # Legend in every panel (remaining chi is chi-specific), placed below the label.
-    ax.legend(bbox_to_anchor=(0.985, 0.88), **legend_kw)
+    legend_pos = {0: (0.975, 0.78), 1: (0.975, 0.78), 2: (0.975, 0.78)}
+    ax.legend(bbox_to_anchor=legend_pos[j], **legend_kw)
 
-axes[-1].set_xlabel(r'$r$', **label_kw)
+# Every panel sits on the bottom row now, so each one carries the x label.
+for ax in axes:
+    ax.set_xlabel(r'$r$', **label_kw)
 
-plt.tight_layout()
+fig.tight_layout(w_pad=PANEL_WPAD)
 
 fig_png = os.path.join(fig_dir, 'figure5.png')
 fig_pdf = os.path.join(fig_dir, 'figure5.pdf')

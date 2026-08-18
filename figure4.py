@@ -11,9 +11,10 @@ import config as cfg
 # spectral_tools (and the raw/compressed data) are only needed to RECOMPUTE the
 # cached statistics; imported lazily inside the PLOT_ONLY=False branch below.
 
-# ── Publication style (match the REVTeX/PRL manuscript fonts) ──────────────────
-# This is a single-column figure (\columnwidth = 3.125 in with the manuscript's
-# revtex4-2 prl + geometry margin=1in). Authored at the true display width with
+# ── Publication style (match the REVTeX manuscript fonts) ─────────────────────
+# This figure spans the full text width of a SINGLE-COLUMN (one-column) article
+# (\textwidth = 6.5 in with geometry margin=1in on letterpaper), with the three
+# panels laid out side by side. Authored at the true display width with
 # Computer-Modern serif fonts and journal-sized text so labels/legends/titles
 # match the body text. Uses LaTeX rendering when latex+dvipng are available, and
 # falls back to matplotlib's Computer-Modern mathtext otherwise.
@@ -221,16 +222,22 @@ for j in range(len(r_flatness)):
     m = y_margin_frac * (vals.max() - vals.min())
     y_lims[j] = (vals.min() - m, vals.max() + m)
 
-# Relative physical heights of the stacked panels (hand-tunable): a larger value
-# makes that panel taller, spreading its curves further apart.
-panel_height_ratios = [1.5, 1.0, 1.2]
+# ── Layout (hand-tunable) ─────────────────────────────────────────────────────
+# Three panels side by side across the full text width of a one-column article.
+FIG_WIDTH   = 6.5     # inches: \textwidth of the single-column layout
+FIG_HEIGHT  = 2.35    # inches: panel height (all three panels share it)
+PANEL_WPAD  = 1.2     # horizontal gap between panels, in font-size units
+                      # (applied by tight_layout, which overrides gridspec wspace)
+# Relative physical widths of the panels: a larger value makes that panel wider.
+panel_width_ratios = [1.0, 1.0, 1.0]
+XTICK_ROTATION = 45   # rho tick labels are tight in a narrow panel; 0 = horizontal
 
-fig, axes = plt.subplots(len(r_flatness), 1,
-                         figsize=(3.125, 1.15 * sum(panel_height_ratios) + 0.45),
+fig, axes = plt.subplots(1, len(r_flatness),
+                         figsize=(FIG_WIDTH, FIG_HEIGHT),
                          dpi=300, sharex=True,
-                         gridspec_kw={'hspace': 0, 'height_ratios': panel_height_ratios})
+                         gridspec_kw={'width_ratios': panel_width_ratios})
 
-# Stacked, contiguous panels (one per scale r); single shared x-axis at the bottom.
+# Side-by-side panels (one per scale r); each keeps its own y-scale and x-axis.
 for j, r in enumerate(r_flatness):
     ax = axes[j]
 
@@ -245,7 +252,9 @@ for j, r in enumerate(r_flatness):
 
     ax.set_xscale('log')
     ax.set_xticks(rho_arr)
-    ax.set_xticklabels([f'{v:.2f}' for v in rho_arr])
+    ax.set_xticklabels([f'{v:.2f}' for v in rho_arr], rotation=XTICK_ROTATION,
+                       ha='right' if XTICK_ROTATION else 'center',
+                       rotation_mode='anchor' if XTICK_ROTATION else None)
     ax.minorticks_off()
     ax.set_ylim(*y_lims[j])
     # Prune top/bottom y-ticks so labels don't collide at the shared panel edges.
@@ -253,13 +262,15 @@ for j, r in enumerate(r_flatness):
     # Panel label position (axes fraction, ha/va='center'), independent per panel.
     # Tune each entry by hand: j=0 -> a) r=2, j=1 -> b) r=4, j=2 -> c) r=8.
     # Panel a's legend occupies the top-right, so its label is dropped lower.
-    label_pos = {0: (0.85, 0.46), 1: (0.85, 0.85), 2: (0.85, 0.75)}
+    label_pos = {0: (0.72, 0.47), 1: (0.72, 0.90), 2: (0.72, 0.90)}
     lx, ly = label_pos[j]
     ax.text(lx, ly, f'{panel_letters[j]}) $r={r}$', transform=ax.transAxes,
             ha='center', va='center', **panel_kw)
     ax.grid(True, which='both', alpha=0.3)
 
-axes[-1].set_xlabel(r'$\rho\ (\%)$', **label_kw)
+# Every panel sits on the bottom row now, so each one carries the x label.
+for ax in axes:
+    ax.set_xlabel(r'$\rho\ (\%)$', **label_kw)
 
 # Legend inside the top (r=2) panel, top-right corner where the curves have
 # converged low. Parenthetical detail is dropped from the labels (given in the
@@ -269,7 +280,7 @@ handles, labels = axes[0].get_legend_handles_labels()
 labels = [l if l.startswith('Wavelet') else re.sub(r'\s*\(.*\)', '', l) for l in labels]
 axes[0].legend(handles, labels, loc='upper right', handlelength=1.8,
                labelspacing=0.3, borderpad=0.3)
-fig.tight_layout()
+fig.tight_layout(w_pad=PANEL_WPAD)
 
 fig_png = os.path.join(fig_dir, 'figure4.png')
 fig_pdf = os.path.join(fig_dir, 'figure4.pdf')
