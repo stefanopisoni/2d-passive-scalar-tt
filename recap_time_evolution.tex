@@ -1,0 +1,336 @@
+\documentclass[aps,prfluids,reprint,onecolumn,amsmath,amssymb,nofootinbib,floatfix]{revtex4-2}
+
+\usepackage{graphicx}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+
+\newcommand{\code}[1]{\texttt{\small #1}}
+\setlist[itemize]{itemsep=1pt, topsep=3pt, parsep=0pt}
+
+\begin{document}
+
+\title{Hybrid Tensor-Train Time Evolution:\\ Status, Findings, and Outlook}
+
+\author{S. Pisoni}
+\affiliation{TN\_Turbulence project --- 2D passive scalar study}
+
+\date{\today}
+
+\begin{abstract}
+Concise status note on the machinery built to evolve a 2D scalar field in the
+hybrid tensor-train (TT) encoding of the compression study. Records the
+equations being solved, what has been implemented, what has been checked, the
+findings and caveats so far, and the plan going forward. Detailed numbers live
+in the test suite; this note keeps only the conclusions.
+\end{abstract}
+
+\maketitle
+
+\section{The equations}
+
+\subsection{Passive scalar advection--diffusion}
+
+The target problem, and the one the compression study characterises statistically:
+\begin{equation}
+\partial_t \theta + \mathbf{u}\!\cdot\!\nabla\theta \;=\; \kappa\nabla^2\theta + f,
+\qquad \nabla\!\cdot\!\mathbf{u} = 0,
+\label{eq:ps}
+\end{equation}
+on a doubly periodic square. Here $\theta$ is a scalar (temperature, dye
+concentration) carried passively by a prescribed incompressible velocity
+$\mathbf{u}$: it does not react back on the flow. $\kappa$ is the molecular
+diffusivity and $f$ a large-scale source.
+
+\paragraph{Physics.} Advection stretches and folds $\theta$, cascading scalar
+variance from the injection scale down to the Batchelor scale where diffusion
+erases it. The resulting fields are strongly \emph{intermittent}: increments have
+heavy tails and flatness grows without bound as the separation shrinks, which is
+precisely the property the hybrid encoding was designed to preserve. The variance
+budget follows from Eq.~\eqref{eq:ps},
+\begin{equation}
+\frac{d}{dt}\,\tfrac12\langle\theta^2\rangle
+\;=\; -\,\kappa\big\langle|\nabla\theta|^2\big\rangle \;+\; \langle\theta f\rangle ,
+\label{eq:budget}
+\end{equation}
+because the advective term is skew-symmetric for $\nabla\!\cdot\!\mathbf{u}=0$
+and therefore conserves $\langle\theta^2\rangle$ exactly. Note the consequence,
+which matters for scheme design: the \emph{nonlinear} (bilinear) transport term
+is the conservative one, and the \emph{linear} diffusive term is what dissipates.
+The same structure holds for Navier--Stokes, where $\mathbf{u}\!\cdot\!\nabla\mathbf{u}$
+conserves kinetic energy and viscosity dissipates it.
+
+When $\nabla\!\cdot\!\mathbf{u}=0$ the transport term also admits the
+\emph{conservative} (flux) form
+\begin{equation}
+\mathbf{u}\!\cdot\!\nabla\theta \;=\; \nabla\!\cdot\!(\mathbf{u}\,\theta),
+\label{eq:cons}
+\end{equation}
+which is equivalent analytically but not after discretisation: the flux form
+respects the variance budget far better and is the usual choice.
+
+\subsection{Cases solved so far}
+
+Work to date has deliberately used constant-coefficient reductions of
+Eq.~\eqref{eq:ps}, because they have exactly known solutions and therefore
+isolate compression error from every other error source:
+\begin{align}
+\partial_t\theta &= \kappa\nabla^2\theta && \text{pure diffusion}\\
+\partial_t\theta + \mathbf{c}\!\cdot\!\nabla\theta &= 0 && \text{rigid translation, } \mathbf{c}\text{ constant}\\
+\partial_t\theta + \mathbf{c}\!\cdot\!\nabla\theta &= \kappa\nabla^2\theta && \text{constant-velocity advection--diffusion}
+\end{align}
+The next step introduces a genuine, space-dependent velocity --- the steady
+cellular flow $\mathbf{u} = (\sin y,\ \sin x)$ --- which is incompressible,
+analytically known, and generates fine scales exponentially.
+
+\subsection{Standard ways to solve these}
+
+\begin{itemize}
+\item \textbf{Pseudo-spectral} is the reference method for periodic 2D
+      turbulence: derivatives are exact in Fourier space, the nonlinear product
+      is formed in physical space with $2/3$ dealiasing, and diffusion is handled
+      by an integrating factor or exponential time differencing so it imposes no
+      timestep restriction. This is how the DNS database underlying the paper was
+      produced.
+\item \textbf{Finite difference / finite volume} with upwind or WENO
+      reconstruction for the transport term, central stencils for diffusion, and
+      SSP Runge--Kutta in time. Cheaper per degree of freedom, more dissipative,
+      and much easier to express as a local operator.
+\item \textbf{Stiffness.} Explicit diffusion requires
+      $\Delta t \le \Delta x^2/4\kappa$ in 2D, which becomes punishing on fine
+      grids; implicit or exponential treatment of the diffusive term is standard.
+\end{itemize}
+
+\paragraph{What we do instead.} The field is stored as a hybrid TT over the
+interleaved (Morton) bit ordering, and every spatial operator is a
+matrix-product operator acting on it. Stencils are finite differences, so the
+semi-discrete system is
+\begin{equation}
+\frac{d\boldsymbol{\theta}}{dt} \;=\; \mathsf{A}\,\boldsymbol{\theta},
+\qquad
+\mathsf{A} \;=\; -c_x\mathsf{D}_x - c_y\mathsf{D}_y + \kappa\,\mathsf{L},
+\end{equation}
+with $\mathsf{A}$ collapsing to a \emph{single} low-bond MPO in the
+constant-coefficient case. Time stepping is explicit Runge--Kutta, and the state
+is recompressed after every stage. Compression is the entire source of novelty
+and the entire source of risk.
+
+\section{The encoding}
+
+Writing the hybrid ansatz out,
+\begin{equation}
+\theta(x,y) \;=\; \sum_{\alpha=1}^{\chi} A^{0}[B,\alpha]\;\Phi_\alpha(\text{fine coordinates}),
+\end{equation}
+with $B$ the coarse-block label carried by the dense head and $\Phi_\alpha$ the
+fine-scale shape functions carried by the compressed tail. So the hybrid TT is a
+\textbf{block-wise reduced basis with a globally shared dictionary}. Two
+consequences:
+\begin{itemize}
+\item The coarse-grained field is a linear functional of the head alone, so
+      ``the large scales live in the head'' is literally true.
+\item The large scales carry no rank error. For advection-dominated dynamics this
+      is the central argument for the encoding: exact large-scale transport with
+      rank-compressed small-scale structure.
+\item The same framing predicts the \emph{seam}: neighbouring blocks get
+      independent amplitude vectors and nothing enforces continuity across a
+      block boundary.
+\end{itemize}
+
+\paragraph{Conventions.} $L$ = bits per axis (grid $2^L\times2^L$); $2L$ total
+interleaved legs, even legs carrying rows ($y$) and odd legs columns ($x$); $N$ =
+legs held by the dense head, so the head spans $2^{N/2}\times2^{N/2}$ coarse
+blocks and the seam period is $2^{L-N/2}$ --- \emph{not} $2^{N/2}$, which
+coincides only at $N=L$.
+
+\section{What was built}
+
+All of it sits on top of \code{tensnet} via its public API. No \code{tensnet}
+source is modified, and --- deliberately stricter --- no \code{tensnet} global
+state is read or written, since a wrong global would not raise but would silently
+produce wrong physics.
+
+\begin{itemize}
+\item \code{hybrid\_ops.py} --- hybrid TT algebra: construction and contraction,
+      truncated SVD with a genuine amplitude tolerance, two-sweep compression
+      with \emph{per-bond} caps, exact arithmetic (add / scale / axpy /
+      Hadamard), MPO application by un-fusing the head, application through an
+      explicit fused $2^N\times2^N$ head operator, rank-1 mass projection, and
+      pointwise evaluation without contracting the TT.
+\item \code{hybrid\_operators.py} --- named stencils, derivative and Laplacian
+      MPOs, exact translation, the combined advection--diffusion operator, exact
+      MPO algebra, and the isotropic seam smoother.
+\item \code{hybrid\_evolve.py} --- Euler / RK2 / SSPRK3 / RK4, a truncation
+      policy that records the variance it removes, a stable-timestep helper
+      enforcing both the advective and diffusive limits, dense finite-difference
+      and analytic spectral references, and diagnostics.
+\item Four test suites, $\sim$117 assertions, all against dense references.
+\end{itemize}
+
+The seam smoother is the isotropic repair --- the \code{\_int64\_xy} treatment,
+not the $x$-only one. With $P_{x,y}$ the seam projectors, $Q=I-P$, and $A_{x,y}$
+the periodic two-neighbour averages,
+\begin{equation}
+S \;=\; Q_x Q_y \;+\; P_x Q_y A_x \;+\; Q_x P_y A_y \;+\; P_x P_y \tfrac{1}{2}(A_x+A_y).
+\end{equation}
+
+\section{What has been checked}
+
+Everything below is verified numerically against a dense reference, not asserted
+from reading source.
+
+\begin{itemize}
+\item Lossless hybrid round trip; agreement between our constructor and the
+      legacy one; the index layout and seam geometry.
+\item All arithmetic is exact, with no hidden truncation.
+\item Compression: lossless at full rank, monotone in the cap, head physical
+      dimension preserved, head bond capped independently of the tail bonds, and
+      norm genuinely lost when truncating.
+\item Every operator --- first and second derivatives at 2nd and 4th order, upwind
+      stencils, Laplacian, translation, seam smoother --- against dense, on both
+      axes, at several $(L,N)$.
+\item Operator composition, and agreement between composing then applying versus
+      applying twice.
+\item The seam smoother reproduces the dense reference implementation exactly, is
+      isotropic under transposition, and touches only seam lines.
+\item All four time steppers reproduce their dense counterparts.
+\item The fused-head and un-fused-head paths agree to round-off, both as single
+      applications and over multi-step evolutions.
+\item Pointwise evaluation agrees with the dense field.
+\end{itemize}
+
+\paragraph{Verified \code{tensnet} traps.} None of these raise; all silently
+corrupt. The global 2D architecture defaults to the non-interleaved layout;
+\code{get\_diff\_mpo} defaults to 8th-order stencils; MPS addition and
+multiplication silently compress at a global $l_2$ tolerance; \code{tt.svd}
+treats its \code{eps} as a squared-energy fraction, so the achievable amplitude
+error saturates around $\sqrt{\epsilon}$; \code{tt.svd} renormalises singular
+values after truncation by default; \code{shift\_mpo} has inverted flags and is
+non-periodic; \code{MPO.\_\_matmul\_\_} and \code{MPO.contract()} cannot handle
+hybrid shapes at all.
+
+\section{Findings and remarks}
+
+\begin{itemize}
+\item \textbf{The low-rank structure survives advection.} A one-cell translation
+      inflates the state rank by of order ten percent, transiently, and returns it
+      \emph{exactly} to baseline whenever the shift is a whole number of coarse
+      blocks. Verified at two different $(L,N)$. An adaptive-tolerance scheme
+      tracks the intrinsic rank of the exact solution to within one or two, so
+      the method accumulates essentially no spurious rank.
+\item \textbf{Truncation error saturates rather than compounding.} Under a hard
+      rank cap over hundreds of advection steps the error stops growing and the
+      field settles onto a representable state that then simply translates. This
+      was the principal risk identified at the outset and it did not materialise
+      for constant-velocity transport.
+\item \textbf{Lossy truncation per step is a property of the cap, not of
+      advection.} It appears when the rank cap sits below the field's intrinsic
+      rank --- which is exactly the fixed-compression-ratio regime the study works
+      in, and a legitimate choice, but the loss should be attributed correctly.
+\item \textbf{Rank capping and tolerance capping answer different questions.} A
+      cap fixes the compression ratio and lets error float; a tolerance fixes
+      error and lets rank float, revealing what the physics actually demands.
+      Both are supported and both are needed.
+\item \textbf{The seam smoother should not run inside the time loop.} It is a
+      low-pass filter and is not idempotent, so iterating it is diffusion. It
+      never beat leaving it off. The \emph{severity} is configuration dependent
+      --- it scales with the fraction of cells on seam lines, $\approx 2^{1-L+N/2}$
+      --- so the earlier dramatic figures came from an unrepresentatively small
+      block width. The seam is an artifact of the representation, so its repair
+      belongs on the output being analysed, not on the state being evolved.
+\item \textbf{Mass conservation is cheap and worth having.} Truncation drifts the
+      mean; a rank-1 constant restores it to round-off at no accuracy cost,
+      provided it is applied \emph{after} truncation. Unlike rescaling the $l_2$
+      norm it does not move variance between scales.
+\item \textbf{Do not renormalise after truncation.} Truncation is an orthogonal
+      projection and losing norm is a theorem, not a defect. Rescaling puts the
+      discarded small-scale variance back into the retained large scales --- a
+      spurious inverse cascade --- and, worse, disables the very diagnostic that
+      detects under-resolution.
+\item \textbf{Consequence for the published data.} Because rescaling does not
+      change the retained subspaces, the legacy pipeline's output is exactly
+      plain truncation times a \emph{global scalar} that tends to unity as the
+      bond dimension grows. Every scale-invariant statistic --- flatness,
+      normalised structure-function ratios, normalised increment PDFs --- is
+      therefore unchanged; only the absolute level of $E(k)$ can have moved. This
+      still needs confirming on the real DNS snapshots.
+\item \textbf{The fused head does not scale.} Single-stencil operators have very
+      sparse fused heads, but operators that are sums of terms --- the Laplacian,
+      the seam smoother --- have essentially dense ones, so sparsity buys nothing
+      for exactly the operators one most wants. It is modestly faster at small
+      $N$ but becomes infeasible in memory at production $N$; the un-fusing path,
+      whose cost carries no $4^N$ term, is the one that scales.
+\item \textbf{Two traps for the experimenter.} Rank experiments need a field
+      whose rank has room to move --- a multiscale field is full rank and the
+      measurement merely saturates the chain geometry. And a total error that
+      falls \emph{below} the pure finite-difference floor is coincidental error
+      cancellation, not an improvement.
+\end{itemize}
+
+\section{Corrections to earlier statements}
+
+Recorded because the reasoning matters more than the conclusions:
+\begin{itemize}
+\item ``Translation is rank-preserving'' (wrong), then ``translation is not
+      rank-preserving, so every step must be lossy'' (also wrong, over-corrected).
+      The measured behaviour is the first bullet of the previous section.
+\item ``Apply the seam smoother once per step, inside the loop.'' It is harmful
+      at every cadence tested.
+\item ``The nonlinear term is the norm-changing one.'' For a passive scalar with
+      $\nabla\!\cdot\!\mathbf{u}=0$ the transport term conserves variance exactly
+      and the linear diffusive term dissipates; see Eq.~\eqref{eq:budget}.
+\end{itemize}
+
+\section{Outlook and next steps}
+
+\begin{enumerate}[leftmargin=*]
+\item \textbf{Commit the validated baseline.} Nothing is under version control yet.
+
+\item \textbf{Cellular flow $\mathbf{u}=(\sin y,\ \sin x)$ --- the immediate next
+      step.} Requires the velocity components as hybrid TTs (analytic, low rank),
+      the bilinear $\mathbf{u}\!\cdot\!\nabla\theta$ path via the Hadamard
+      product, and both the advective and conservative forms of
+      Eq.~\eqref{eq:cons}. \emph{Settles:} whether the rank saturates or grows
+      without bound once there is a genuine cascade --- the question the whole
+      programme rests on, and one that constant-velocity transport cannot test.
+      \emph{Risk:} this is where it could fail; the Hadamard product multiplies
+      ranks before every recompression and is also the cost driver.
+
+\item \textbf{Numerical versus physical dissipation.} Convert the logged
+      truncation loss into a dissipation rate and compare with
+      $\kappa\langle|\nabla\theta|^2\rangle$ from Eq.~\eqref{eq:budget}. Cheap,
+      reuses the previous runs, and decides on evidence whether a
+      norm-conserving integrator is needed at all.
+
+\item \textbf{Hybrid versus standard TT at matched compression.} The actual
+      scientific claim and the true sequel to the paper: does the hybrid encoding
+      reproduce intermittency statistics \emph{under evolution} better than a
+      standard TT at equal $\rho$? Needs a standard-TT evolution path, the
+      existing degree-of-freedom matching, and the paper's diagnostics recast as
+      functions of time. Compression quality does not imply dynamical quality;
+      this is what measures it.
+
+\item \textbf{Scale to the production geometry} ($4096^2$). Use the un-fusing
+      head path. Performance has never been profiled and will need attention.
+
+\item \textbf{Real DNS velocity fields}, together with the deferred check of the
+      renormalisation effect on the published figures. Both need the dataset.
+
+\item \textbf{Conditional: TDVP or implicit stepping.} If step 3 shows truncation
+      dissipation dominating, the principled remedy is tangent-space integration,
+      which projects the generator rather than the state and so conserves the norm
+      and any quadratic invariant of the generator exactly. Deliberately gated on
+      a measurement rather than adopted speculatively. Implicit or exponential
+      treatment of diffusion becomes necessary if the timestep restriction bites.
+\end{enumerate}
+
+\paragraph{Beyond the passive scalar.} The natural extension is 2D
+Navier--Stokes in vorticity form,
+$\partial_t\omega + \mathbf{u}\!\cdot\!\nabla\omega = \nu\nabla^2\omega$ with
+$\mathbf{u}$ recovered from $\omega$ by an elliptic solve, which adds a Poisson
+inversion --- a natural fit for the fused/sparse head --- and a second quadratic
+invariant, since 2D conserves both energy and enstrophy and truncation will
+damage them at different rates.
+
+\end{document}
