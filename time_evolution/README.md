@@ -26,6 +26,8 @@ run_decaying_cellular.py   Experiment: decaying scalar in a cellular flow, dense
 plot_decaying_cellular.py  Figures from those runs
 plot_hybrid_vs_standard.py Hybrid vs standard TT under evolution, at matched cost
 sweep_head_size.py         Best head size N, and how its advantage scales with L
+sweep_resolution.py        Budget needed for a fixed accuracy, L=7..10
+plot_scaleup.py            Hybrid vs standard under evolution at L=8 and L=9
 tests/                     ~117 assertions, all against dense references
 results/                   .npz written by the runs (git-ignored, regenerable)
 figures/                   committed .png
@@ -74,6 +76,27 @@ done; done; wait
 python plot_hybrid_vs_standard.py
 python sweep_head_size.py          # representation only, ~5 min
 ```
+
+Scaling to higher resolution. Holding rho fixed as L grows needs `chi ~ 2^L`, so
+evolution cost grows like `8^L`; the evolution comparison is therefore run at
+L=8 and L=9 only, and the resolution trend is measured by representation, which
+`plot_scaleup.py` first checks is a faithful stand-in. All of it uses
+`kappa ~ dx^2` so that `ell_B/dx` is fixed and a finer grid adds scales rather
+than over-resolving the ones already there.
+
+```bash
+for N in 0 8 10; do for bd in 12 16 24 32; do
+  python run_decaying_cellular.py --L 9 --N $N --bd $bd --kappa 1.25e-3 \
+    --T 8 --label L9_N${N}_bd${bd} &
+done; done; wait
+python plot_scaleup.py
+python sweep_resolution.py --L 7 8 9 10
+```
+
+Read the gain as **parameters saved at a fixed accuracy** (~2-3x). The error
+ratio at a fixed budget describes the same gap down a much steeper axis and
+comes out ten times larger; both are printed, and only the first answers "how
+much does the head buy me".
 
 `results/` is git-ignored: the `.npz` files are a few MB each and regenerate from
 the scripts.
