@@ -21,7 +21,12 @@ hybrid_operators.py        MPO builders: stencils, derivatives, Laplacian,
                            translation, advection-diffusion, isotropic seam smoother
 hybrid_evolve.py           Explicit RK steppers, truncation policy, variable-coefficient
                            transport, dense/spectral references, diagnostics
+run_decaying_cellular.py   Experiment: decaying scalar in a cellular flow, dense
+                           ground truth plus hybrid runs at several rank caps
+plot_decaying_cellular.py  Figures from those runs
 tests/                     ~117 assertions, all against dense references
+results/                   .npz written by the runs (git-ignored, regenerable)
+figures/                   committed .png
 recap_time_evolution.tex   Status note: equations, what is checked, findings, outlook
 recap_time_evolution.pdf
 ```
@@ -40,6 +45,24 @@ python time_evolution/tests/test_scaleup_L8_N6.py
 Needs `tensnet` (see `config.py` / the root README). No raw DNS data is required —
 the tests build their own fields and check against dense references computed in
 place.
+
+The cellular-flow experiment runs the same way. The dense ground truth takes
+about 20 s; each hybrid run is 20-50 min at `L=8`, so they are meant to be run in
+parallel and then plotted:
+
+```bash
+cd time_evolution
+python run_decaying_cellular.py --dense --label dense
+python run_decaying_cellular.py --eps 1e-6 --bd 128 --label adaptive &
+python run_decaying_cellular.py --bd 64 --label bd64 &
+python run_decaying_cellular.py --bd 32 --label bd32 &
+python run_decaying_cellular.py --bd 16 --label bd16 &
+wait
+python plot_decaying_cellular.py
+```
+
+`results/` is git-ignored: the `.npz` files are a few MB each and regenerate from
+the scripts.
 
 ## Conventions
 

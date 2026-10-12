@@ -12,3 +12,6 @@ _archive/
 
 # Large data lives outside the repo (see config.py / README)
 *.tens
+
+# Experiment outputs: regenerable from the scripts, a few MB each
+time_evolution/results/
