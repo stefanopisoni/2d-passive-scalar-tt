@@ -97,17 +97,33 @@ def seam_period(L: int, N: int) -> int:
 
 
 def seam_indices(L: int, N: int) -> torch.Tensor:
-    """Row/column indices sitting on a coarse-block boundary (last cell of each block)."""
+    """Row/column indices sitting on a coarse-block boundary (last cell of each block).
+
+    Empty when N=0: with no head there are no coarse blocks and so no seams.
+    (The formula would otherwise return the periodic wrap boundary, which is
+    not a seam.)
+    """
+    if N == 0:
+        return torch.empty(0, dtype=torch.long)
     p = seam_period(L, N)
     idx = torch.arange(2**L)
     return idx[(idx + 1) % p == 0]
 
 
 def _check_LN(L: int, N: int) -> None:
+    """``N=0`` is permitted and means *no head*: a plain QTT.
+
+    With N=0 the construction below emits a trivial (1,1,1) leading core and
+    2L binary tail cores, which is exactly ``tt.vector_to_mps(vec, 2, 2L)`` --
+    the standard MPS the paper compares against. Keeping it inside the same
+    code path matters: a separate implementation would differ in compression
+    policy and contraction order, and those differences would contaminate any
+    hybrid-versus-standard comparison.
+    """
     if N % 2:
         raise ValueError(f"N={N} must be even so the head holds N/2 bits of each axis")
-    if not 0 < N < 2 * L:
-        raise ValueError(f"N={N} must satisfy 0 < N < 2L = {2 * L}")
+    if not 0 <= N < 2 * L:
+        raise ValueError(f"N={N} must satisfy 0 <= N < 2L = {2 * L}")
 
 
 # --------------------------------------------------------------------------

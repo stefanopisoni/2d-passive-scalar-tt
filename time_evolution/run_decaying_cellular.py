@@ -224,9 +224,21 @@ def run(L: int, N: int, kappa: float, T: float, cfl: float, diff_number: float,
                 row["tt_bonds"] = np.array(ho.bond_dims(h), dtype=np.int64)
                 row["tt_params"] = ho.num_params(h)
                 scale = max(np.abs(dense).max(), 1e-300)
+                nrm = max(np.linalg.norm(dense), 1e-300)
                 row["err_inf"] = float(np.abs(fh - dense).max() / scale)
-                row["err_l2"] = float(np.linalg.norm(fh - dense)
-                                      / max(np.linalg.norm(dense), 1e-300))
+                row["err_l2"] = float(np.linalg.norm(fh - dense) / nrm)
+                # Control: compress the *true* field at this same budget. The
+                # gap between this and err_* is the part of the error that comes
+                # from evolving in the representation rather than from the
+                # representation itself -- the paper measured the latter, this
+                # experiment is about the former.
+                hr = ho.field_to_hybrid(torch.from_numpy(
+                    np.ascontiguousarray(dense)), L, N, bd_first=bd,
+                    bd_remaining=bd, eps=eps)
+                fr = ho.hybrid_to_field(hr, L).numpy()
+                row["repr_err_inf"] = float(np.abs(fr - dense).max() / scale)
+                row["repr_err_l2"] = float(np.linalg.norm(fr - dense) / nrm)
+                row["repr_params"] = ho.num_params(hr)
             rows.append(row)
         if (i % snap_every == 0 or i == n_steps) and len(snaps) < n_snaps:
             snaps.append(dense.copy() if h is None

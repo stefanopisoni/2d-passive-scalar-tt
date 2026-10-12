@@ -227,6 +227,8 @@ def seam_jump_ratio(f: np.ndarray, L: int, N: int) -> float:
     Averaged over both axes, since the seam structure is isotropic.
     """
     idx = ho.seam_indices(L, N).numpy()
+    if idx.size == 0:          # N=0: a plain QTT has no coarse blocks
+        return float("nan")
     dx_ = np.abs(f - np.roll(f, -1, axis=hop.AXIS_X))
     dy_ = np.abs(f - np.roll(f, -1, axis=hop.AXIS_Y))
     on = 0.5 * (dx_[:, idx].mean() + dy_[idx, :].mean())

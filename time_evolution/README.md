@@ -24,6 +24,8 @@ hybrid_evolve.py           Explicit RK steppers, truncation policy, variable-coe
 run_decaying_cellular.py   Experiment: decaying scalar in a cellular flow, dense
                            ground truth plus hybrid runs at several rank caps
 plot_decaying_cellular.py  Figures from those runs
+plot_hybrid_vs_standard.py Hybrid vs standard TT under evolution, at matched cost
+sweep_head_size.py         Best head size N, and how its advantage scales with L
 tests/                     ~117 assertions, all against dense references
 results/                   .npz written by the runs (git-ignored, regenerable)
 figures/                   committed .png
@@ -61,6 +63,18 @@ wait
 python plot_decaying_cellular.py
 ```
 
+The hybrid-versus-standard comparison sweeps head size against bond cap. `N=0`
+means *no head* and is exactly the standard MPS, so both encodings run through
+one code path and the head size is the only variable:
+
+```bash
+for N in 0 4 6 8 10; do for bd in 8 12 16 24 32; do
+  python run_decaying_cellular.py --N $N --bd $bd --T 8 --label cmp_N${N}_bd${bd} &
+done; done; wait
+python plot_hybrid_vs_standard.py
+python sweep_head_size.py          # representation only, ~5 min
+```
+
 `results/` is git-ignored: the `.npz` files are a few MB each and regenerate from
 the scripts.
 
@@ -69,6 +83,9 @@ the scripts.
 `L` = bits per axis (grid `2^L x 2^L`); `2L` interleaved Morton legs with even legs
 carrying rows (`y`) and odd legs columns (`x`); `N` = legs held by the dense head,
 spanning `2^(N/2) x 2^(N/2)` coarse blocks. The seam period is `2^(L - N/2)`.
+`N = 0` is permitted and means no head at all: a plain QTT, verified to
+reproduce `tt.vector_to_mps(vec, 2, 2L)` bond-for-bond (up to tensnet's
+renormalisation factor), which is the paper's standard MPS.
 
 Everything is built on top of `tensnet` through its public API. No `tensnet` source
 is modified, and no `tensnet` global state is read or written — several of its
