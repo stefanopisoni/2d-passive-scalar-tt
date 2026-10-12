@@ -24,7 +24,10 @@ Concise status note on the machinery built to evolve a 2D scalar field in the
 hybrid tensor-train (TT) encoding of the compression study. Records the
 equations being solved, what has been implemented, what has been checked, the
 findings and caveats so far, and the plan going forward. Detailed numbers live
-in the test suite; this note keeps only the conclusions.
+in the test suite; this note keeps only the conclusions. As of this revision the
+machinery is validated, a genuine cascade has been run, and the central
+question --- whether the TT rank stays bounded once fine scales are generated ---
+has been answered affirmatively.
 \end{abstract}
 
 \maketitle
@@ -81,9 +84,21 @@ isolate compression error from every other error source:
 \partial_t\theta + \mathbf{c}\!\cdot\!\nabla\theta &= 0 && \text{rigid translation, } \mathbf{c}\text{ constant}\\
 \partial_t\theta + \mathbf{c}\!\cdot\!\nabla\theta &= \kappa\nabla^2\theta && \text{constant-velocity advection--diffusion}
 \end{align}
-The next step introduces a genuine, space-dependent velocity --- the steady
-cellular flow $\mathbf{u} = (\sin y,\ \sin x)$ --- which is incompressible,
-analytically known, and generates fine scales exponentially.
+A genuine, space-dependent velocity has since been added: the steady cellular
+flow obtained from the streamfunction $\psi = \sin x \sin y$, i.e.
+$\mathbf{u} = (\sin x\cos y,\ -\cos x \sin y)$, run both decaying and weakly
+forced. The simpler choice $\mathbf{u} = (\sin y,\ \sin x)$ was tried first and
+discarded: it is incompressible but degenerate, in that the advective and
+conservative discretisations coincide identically, so it cannot distinguish the
+transport forms at all.
+
+The velocity is built from $\psi$ with the solver's own stencils,
+$\mathbf{u} = (\mathsf{D}_y\psi,\ -\mathsf{D}_x\psi)$, which makes it
+divergence-free to round-off at the \emph{discrete} level since $\mathsf{D}_x$
+and $\mathsf{D}_y$ act on different axes and commute exactly. (For separable
+trigonometric flows analytic sampling happens to be discretely divergence-free
+too; the streamfunction route is the general guarantee, not an improvement in
+that special case.)
 
 \subsection{Standard ways to solve these}
 
@@ -162,11 +177,20 @@ produce wrong physics.
       MPOs, exact translation, the combined advection--diffusion operator, exact
       MPO algebra, and the isotropic seam smoother.
 \item \code{hybrid\_evolve.py} --- Euler / RK2 / SSPRK3 / RK4, a truncation
-      policy that records the variance it removes, a stable-timestep helper
-      enforcing both the advective and diffusive limits, dense finite-difference
-      and analytic spectral references, and diagnostics.
+      policy with optional loss accounting, a stable-timestep helper enforcing
+      both the advective and diffusive limits, variable-coefficient transport in
+      advective / conservative / skew form with optional forcing, velocity from a
+      streamfunction, dense finite-difference and analytic spectral references,
+      and diagnostics including a variance-budget measure of numerical
+      dissipation.
 \item Four test suites, $\sim$117 assertions, all against dense references.
 \end{itemize}
+
+All of this lives in \code{time\_evolution/}, deliberately separated from the
+paper material in the repository root. The dependency runs one way only: these
+modules read \code{config.py} and \code{hybrid\_MPS.py} from the root, and
+nothing in the root imports from them, so the paper figures reproduce without
+this directory.
 
 The seam smoother is the isotropic repair --- the \code{\_int64\_xy} treatment,
 not the $x$-only one. With $P_{x,y}$ the seam projectors, $Q=I-P$, and $A_{x,y}$
@@ -198,6 +222,10 @@ from reading source.
 \item The fused-head and un-fused-head paths agree to round-off, both as single
       applications and over multi-step evolutions.
 \item Pointwise evaluation agrees with the dense field.
+\item The variable-coefficient right-hand side against dense, for all three
+      transport forms, with and without diffusion and forcing.
+\item Variance conservation of the three transport forms, at several
+      resolutions and timestep sizes.
 \end{itemize}
 
 \paragraph{Verified \code{tensnet} traps.} None of these raise; all silently
@@ -213,6 +241,46 @@ hybrid shapes at all.
 \section{Findings and remarks}
 
 \begin{itemize}
+\item \textbf{The rank saturates in a genuine cascade.} This is the central
+      result. In the cellular flow the intrinsic rank of the \emph{dense}
+      solution --- a property of the physics, not of the scheme --- rises during the
+      initial stretching and then plateaus for the rest of the run rather than
+      growing without bound. An adaptive-tolerance TT tracks it a few units
+      below throughout, with the error flat over a thousand steps. Constant-velocity
+      transport could not test this; a real cascade can, and the encoding holds.
+\item \textbf{Error saturates at fixed rank too}, at every bond dimension
+      tried, reproducing what was already seen for pure translation.
+\item \textbf{Bulk statistics survive rank starvation far better than
+      pointwise accuracy.} At a third of the rank the field actually needs, the
+      pointwise error is a few percent while the variance still tracks the
+      reference to about one part in a thousand. Encouraging for a
+      statistics-focused study, and worth testing directly against the paper's
+      diagnostics.
+\item \textbf{Numerical dissipation is negligible against molecular
+      dissipation} --- a fraction of a percent of it, even at a third of the
+      required rank. On this evidence plain truncation is adequate and a
+      norm-conserving integrator is not needed, which retires the main open
+      question about the scheme.
+\item \textbf{The skew-symmetric transport form is essential.} The advective
+      and conservative discretisations drift in variance by equal and opposite
+      amounts, and their average is conserved to machine zero --- at every
+      resolution, timestep and velocity construction tested. The drift of the
+      one-sided forms grows sharply as the grid coarsens or the run lengthens,
+      so it is not a small effect.
+\item \textbf{Centred advection constrains the time scheme.} The spatial
+      operator has purely imaginary eigenvalues, so forward Euler is outright
+      unstable and RK2 is \emph{latently} unstable: its amplification factor on
+      the imaginary axis exceeds one, which stays invisible on a smooth field and
+      would bite precisely when the cascade generates high-wavenumber content.
+      SSPRK3 or RK4 is required.
+\item \textbf{Performance came almost entirely from one change.} Compression
+      sweeps dominate the cost, and on the matrix shapes they produce torch's CPU
+      LAPACK path is several times slower than scipy's; switching the sweeps gave
+      roughly an order of magnitude end to end. Thread count mattered before the
+      switch and does not after. Two further optimisations that flop counting
+      predicted would help --- replacing an einsum with a matmul, and cutting the
+      number of truncations per step --- both measured within noise, because
+      fewer-but-larger compressions offset the reduced call count.
 \item \textbf{The low-rank structure survives advection.} A one-cell translation
       inflates the state rank by of order ten percent, transiently, and returns it
       \emph{exactly} to baseline whenever the shift is a whole number of coarse
@@ -261,11 +329,21 @@ hybrid shapes at all.
       for exactly the operators one most wants. It is modestly faster at small
       $N$ but becomes infeasible in memory at production $N$; the un-fusing path,
       whose cost carries no $4^N$ term, is the one that scales.
-\item \textbf{Two traps for the experimenter.} Rank experiments need a field
-      whose rank has room to move --- a multiscale field is full rank and the
-      measurement merely saturates the chain geometry. And a total error that
-      falls \emph{below} the pure finite-difference floor is coincidental error
-      cancellation, not an improvement.
+\item \textbf{The cascade run was decaying, not statistically steady.} The
+      forcing amplitude was set to balance the \emph{initial} dissipation, but
+      once the cascade steepens gradients the dissipation grows by orders of
+      magnitude, so the field decays anyway. That the rank plateau holds while
+      the variance falls by two orders is arguably a stronger statement, but the
+      statistically-steady state is the regime the paper's statistics describe
+      and it has not yet been reached.
+\item \textbf{Traps for the experimenter.} Rank experiments need a field
+      whose rank has room to move: a multiscale field is full rank and the
+      measurement merely saturates the chain geometry. A total error that falls
+      \emph{below} the pure finite-difference floor is coincidental error
+      cancellation, not an improvement. A diagnostic that aggregates truncation
+      losses across a whole right-hand side does not measure dissipation of the
+      state. And a transport test flow must be genuinely two-dimensional, or the
+      discretisation forms it is meant to separate coincide identically.
 \end{itemize}
 
 \section{Corrections to earlier statements}
@@ -280,28 +358,43 @@ Recorded because the reasoning matters more than the conclusions:
 \item ``The nonlinear term is the norm-changing one.'' For a passive scalar with
       $\nabla\!\cdot\!\mathbf{u}=0$ the transport term conserves variance exactly
       and the linear diffusive term dissipates; see Eq.~\eqref{eq:budget}.
+\item \textbf{The truncation-loss diagnostic was wrong by four orders of
+      magnitude}, and in the alarming direction: it reported numerical
+      dissipation at roughly seventeen times the molecular value when the true
+      figure is about two thousandths of it. It summed every compression,
+      including the dozen or so per right-hand-side evaluation performed on
+      intermediates whose norms are those of the right-hand side rather than of
+      $\theta$. Caught only because it contradicted the variance history, which
+      tracked the reference closely. Replaced by a variance-budget measure, with
+      a warning left on the raw accumulator.
+\item \textbf{Two performance predictions from flop counting, both wrong.}
+      Replacing an einsum with a matmul and cutting the truncation count per step
+      were each expected to help and each measured within noise. The actual win
+      was in a place flop counting does not look at all: the LAPACK backend.
+      Relatedly, the compression granularity inside the transport term was
+      argued in both directions before being settled by measurement.
+\item \textbf{Two wrong diagnoses of a changed variance drift.} A discrepancy
+      against an earlier measurement was attributed first to the timestep and
+      then to the velocity construction; both were ruled out by direct test, and
+      the cause was the grid resolution together with the run length implied by a
+      fixed step count.
 \end{itemize}
 
-\section{Outlook and next steps}
+\section{Status and next steps}
+
+\paragraph{Done.} The validated baseline is committed and separated from the
+paper material. The cellular-flow cascade has been run and answers the central
+question: the rank saturates. The dissipation comparison, which came with it,
+shows truncation dissipation to be negligible against molecular diffusion, so the
+conditional TDVP upgrade is not currently warranted. Compression performance has
+been profiled and improved by about an order of magnitude.
 
 \begin{enumerate}[leftmargin=*]
-\item \textbf{Commit the validated baseline.} Nothing is under version control yet.
-
-\item \textbf{Cellular flow $\mathbf{u}=(\sin y,\ \sin x)$ --- the immediate next
-      step.} Requires the velocity components as hybrid TTs (analytic, low rank),
-      the bilinear $\mathbf{u}\!\cdot\!\nabla\theta$ path via the Hadamard
-      product, and both the advective and conservative forms of
-      Eq.~\eqref{eq:cons}. \emph{Settles:} whether the rank saturates or grows
-      without bound once there is a genuine cascade --- the question the whole
-      programme rests on, and one that constant-velocity transport cannot test.
-      \emph{Risk:} this is where it could fail; the Hadamard product multiplies
-      ranks before every recompression and is also the cost driver.
-
-\item \textbf{Numerical versus physical dissipation.} Convert the logged
-      truncation loss into a dissipation rate and compare with
-      $\kappa\langle|\nabla\theta|^2\rangle$ from Eq.~\eqref{eq:budget}. Cheap,
-      reuses the previous runs, and decides on evidence whether a
-      norm-conserving integrator is needed at all.
+\item \textbf{A properly forced steady state.} The cascade run so far decays;
+      the forcing needs to be far stronger to reach the statistically steady
+      regime the paper's statistics describe. Cheap now that a run costs minutes
+      rather than hours. \emph{Settles:} whether the rank plateau survives in a
+      sustained cascade rather than a decaying one.
 
 \item \textbf{Hybrid versus standard TT at matched compression.} The actual
       scientific claim and the true sequel to the paper: does the hybrid encoding
@@ -309,20 +402,24 @@ Recorded because the reasoning matters more than the conclusions:
       standard TT at equal $\rho$? Needs a standard-TT evolution path, the
       existing degree-of-freedom matching, and the paper's diagnostics recast as
       functions of time. Compression quality does not imply dynamical quality;
-      this is what measures it.
+      this is what measures it. The observation that variance survives rank
+      starvation far better than pointwise accuracy makes the outcome genuinely
+      uncertain, and therefore worth measuring.
 
 \item \textbf{Scale to the production geometry} ($4096^2$). Use the un-fusing
-      head path. Performance has never been profiled and will need attention.
+      head path: the fused head is dense for summed operators and does not scale.
+      Two further compression optimisations remain in reserve --- fusing operator
+      application with truncation, and tracking the canonical gauge to skip a
+      sweep --- worth perhaps another factor of two, and more relevant at this
+      size than at $128^2$.
 
 \item \textbf{Real DNS velocity fields}, together with the deferred check of the
       renormalisation effect on the published figures. Both need the dataset.
 
-\item \textbf{Conditional: TDVP or implicit stepping.} If step 3 shows truncation
-      dissipation dominating, the principled remedy is tangent-space integration,
-      which projects the generator rather than the state and so conserves the norm
-      and any quadratic invariant of the generator exactly. Deliberately gated on
-      a measurement rather than adopted speculatively. Implicit or exponential
-      treatment of diffusion becomes necessary if the timestep restriction bites.
+\item \textbf{Conditional, and currently not indicated: TDVP or implicit
+      stepping.} The dissipation measurement argues against the former for now;
+      the latter becomes necessary only if the diffusive timestep restriction
+      starts to bite at production resolution.
 \end{enumerate}
 
 \paragraph{Beyond the passive scalar.} The natural extension is 2D
