@@ -388,31 +388,42 @@ def variable_rhs(ux, uy, L: int, N: int, dx: float, kappa: float = 0.0,
     # can win. Measured, not assumed; see the granularity comparison in the notes.
     inner = trunc if compress_inner else (lambda z: z)
 
-    def advective(h):
-        a = inner(ho.hybrid_hadamard(ux, inner(ho.hybrid_apply(Dx, h, N))))
-        b = inner(ho.hybrid_hadamard(uy, inner(ho.hybrid_apply(Dy, h, N))))
-        return trunc(ho.hybrid_axpy(-1.0, a, -1.0, b))
+    def _adv_x(h):
+        return inner(ho.hybrid_hadamard(ux, inner(ho.hybrid_apply(Dx, h, N))))
 
-    def conservative(h):
-        a = inner(ho.hybrid_apply(Dx, inner(ho.hybrid_hadamard(ux, h)), N))
-        b = inner(ho.hybrid_apply(Dy, inner(ho.hybrid_hadamard(uy, h)), N))
-        return trunc(ho.hybrid_axpy(-1.0, a, -1.0, b))
+    def _adv_y(h):
+        return inner(ho.hybrid_hadamard(uy, inner(ho.hybrid_apply(Dy, h, N))))
+
+    def _con_x(h):
+        return inner(ho.hybrid_apply(Dx, inner(ho.hybrid_hadamard(ux, h)), N))
+
+    def _con_y(h):
+        return inner(ho.hybrid_apply(Dy, inner(ho.hybrid_hadamard(uy, h)), N))
 
     def rhs(h):
-        if form == "advective":
-            t = advective(h)
-        elif form == "conservative":
-            t = conservative(h)
-        else:
-            t = trunc(ho.hybrid_axpy(0.5, advective(h), 0.5, conservative(h)))
+        # Accumulate every contribution exactly and truncate once at the end.
+        # Truncating after each partial sum instead costs three extra full
+        # two-sweep compressions per RHS evaluation for no accuracy gain, since
+        # the sums themselves are exact.
+        terms = []
+        if form in ("advective", "skew"):
+            w = 1.0 if form == "advective" else 0.5
+            terms += [(-w, _adv_x(h)), (-w, _adv_y(h))]
+        if form in ("conservative", "skew"):
+            w = 1.0 if form == "conservative" else 0.5
+            terms += [(-w, _con_x(h)), (-w, _con_y(h))]
         if kappa:
-            t = trunc(ho.hybrid_axpy(1.0, t, kappa, ho.hybrid_apply(lap, h, N)))
+            terms.append((kappa, ho.hybrid_apply(lap, h, N)))
         if forcing is not None:
             # without a source a passive scalar simply decays to nothing, so a
             # sustained cascade -- the regime the statistics describe -- needs
             # steady large-scale injection.
-            t = trunc(ho.hybrid_add(t, forcing))
-        return t
+            terms.append((1.0, forcing))
+        acc = ho.hybrid_scale(terms[0][1], terms[0][0])
+        for c, t in terms[1:]:
+            acc = ho.hybrid_add(acc, ho.hybrid_scale(t, c))
+        return trunc(acc)
+
     return rhs
 
 

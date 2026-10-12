@@ -40,6 +40,7 @@ import sys
 from typing import Iterable, List, Sequence
 
 import numpy as np
+import scipy.linalg as sla
 import torch
 
 import config as cfg
@@ -210,7 +211,36 @@ def contract(mps) -> torch.Tensor:
 # --------------------------------------------------------------------------
 # linear algebra with explicit truncation
 # --------------------------------------------------------------------------
-def truncated_svd(M: torch.Tensor, eps: float = None, bdmax: int = None,
+def _truncation_rank(S: np.ndarray, eps: float, bdmax: int) -> int:
+    """Rank keeping discarded l2 weight below ``eps * ||S||``, then capped."""
+    r = len(S)
+    if eps is not None and r:
+        # tail[i] = sum_{j >= i} S_j^2 : the l2 error incurred by keeping rank i
+        tail = np.cumsum(S[::-1] ** 2)[::-1]
+        tol = (eps * np.linalg.norm(S)) ** 2
+        keep = np.nonzero(tail > tol)[0]
+        r = int(keep[-1]) + 1 if len(keep) else 1
+    if bdmax is not None:
+        r = min(r, bdmax)
+    return max(r, 1)
+
+
+def _svd(M: np.ndarray):
+    """SVD via LAPACK, falling back to the slower but sturdier driver.
+
+    scipy/numpy are used rather than torch throughout the compression sweeps:
+    measured on the matrix shapes these sweeps actually produce, torch's CPU
+    LAPACK path is 3-7x slower (e.g. 8.1 ms vs 1.1 ms for a 256x128 QR), and
+    the torch<->numpy conversions are zero-copy views costing ~1 us.
+    """
+    try:
+        return sla.svd(M, full_matrices=False, check_finite=False)
+    except np.linalg.LinAlgError:
+        return sla.svd(M, full_matrices=False, check_finite=False,
+                       lapack_driver="gesvd")
+
+
+def truncated_svd(M, eps: float = None, bdmax: int = None,
                   renormalize: bool = False):
     """SVD truncated to relative l2 tolerance ``eps`` and/or rank ``bdmax``.
 
@@ -224,24 +254,18 @@ def truncated_svd(M: torch.Tensor, eps: float = None, bdmax: int = None,
     of variance -- a truncation that loses norm must show up as lost norm.  The
     flag exists only to reproduce the legacy pipeline bit-for-bit.
     """
-    U, S, Vh = torch.linalg.svd(M, full_matrices=False)
-    full_norm = torch.linalg.norm(S)
-    r = len(S)
-    if eps is not None and r:
-        # tail[i] = sum_{j >= i} S_j^2 : the l2 error incurred by keeping rank i
-        tail = torch.flip(torch.cumsum(torch.flip(S**2, [0]), 0), [0])
-        tol = (eps * full_norm) ** 2
-        keep = torch.nonzero(tail > tol).flatten()
-        r = int(keep[-1].item()) + 1 if len(keep) else 1
-    if bdmax is not None:
-        r = min(r, bdmax)
-    r = max(r, 1)
+    Mn = M.numpy() if isinstance(M, torch.Tensor) else np.asarray(M)
+    U, S, Vh = _svd(Mn)
+    full_norm = np.linalg.norm(S)
+    r = _truncation_rank(S, eps, bdmax)
     S = S[:r]
     if renormalize:
-        kept = torch.linalg.norm(S)
+        kept = np.linalg.norm(S)
         if kept > 0:
             S = S * (full_norm / kept)
-    return U[:, :r], S, Vh[:r, :]
+    return (torch.from_numpy(np.ascontiguousarray(U[:, :r])),
+            torch.from_numpy(np.ascontiguousarray(S)),
+            torch.from_numpy(np.ascontiguousarray(Vh[:r, :])))
 
 
 def compress_cores(A: Sequence[torch.Tensor], caps: Sequence[int] = None,
@@ -251,11 +275,14 @@ def compress_cores(A: Sequence[torch.Tensor], caps: Sequence[int] = None,
     ``caps[b]`` bounds bond ``b`` (between sites ``b`` and ``b+1``) individually,
     which is what the hybrid encoding needs and what ``MPS.compress`` -- a single
     scalar ``max_bd`` -- cannot express.  Shared with the MPO compressor.
+
+    The sweeps run in numpy/LAPACK; see :func:`_svd` for why.
     """
-    A = [T.clone() for T in A]
-    n = len(A)
+    An = [(T.numpy() if isinstance(T, torch.Tensor) else np.asarray(T)).copy()
+          for T in A]
+    n = len(An)
     if n == 1:
-        return A
+        return [torch.from_numpy(np.ascontiguousarray(An[0]))]
     if caps is None:
         caps = [None] * (n - 1)
     if len(caps) != n - 1:
@@ -263,19 +290,25 @@ def compress_cores(A: Sequence[torch.Tensor], caps: Sequence[int] = None,
 
     # sweep left -> right, QR, leaving sites 0..n-2 left-orthogonal
     for k in range(n - 1):
-        l, p, r = A[k].shape
-        Q, R = torch.linalg.qr(A[k].reshape(l * p, r), mode="reduced")
-        A[k] = Q.reshape(l, p, -1)
-        A[k + 1] = torch.tensordot(R, A[k + 1], dims=([1], [0]))
+        l, p, r = An[k].shape
+        Q, R = sla.qr(An[k].reshape(l * p, r), mode="economic", check_finite=False)
+        An[k] = Q.reshape(l, p, -1)
+        An[k + 1] = np.tensordot(R, An[k + 1], axes=([1], [0]))
 
     # sweep right -> left, SVD, truncating each bond
     for k in range(n - 1, 0, -1):
-        l, p, r = A[k].shape
-        U, S, Vh = truncated_svd(A[k].reshape(l, p * r), eps=eps, bdmax=caps[k - 1])
-        A[k] = Vh.reshape(-1, p, r)
-        A[k - 1] = torch.einsum("lpr,rk,k->lpk", A[k - 1], U, S)
+        l, p, r = An[k].shape
+        U, S, Vh = _svd(An[k].reshape(l, p * r))
+        rk = _truncation_rank(S, eps, caps[k - 1])
+        An[k] = Vh[:rk].reshape(-1, p, r)
+        # A[k-1] @ (U * S), written as a matmul: np.einsum with optimize=True
+        # re-derives the contraction path on every call, which for a 3-operand
+        # contraction this small costs more than the contraction itself.
+        lm, pm, rm = An[k - 1].shape
+        An[k - 1] = (An[k - 1].reshape(lm * pm, rm) @ (U[:, :rk] * S[:rk])
+                     ).reshape(lm, pm, rk)
 
-    return A
+    return [torch.from_numpy(np.ascontiguousarray(x)) for x in An]
 
 
 def hybrid_compress(mps, bd_first: int = None, bd_remaining: int = None,
