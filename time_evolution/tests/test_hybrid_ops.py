@@ -8,7 +8,9 @@ import os
 import sys
 import warnings
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_PKG = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # time_evolution/
+sys.path.insert(0, _PKG)
+sys.path.insert(0, os.path.dirname(_PKG))  # repo root: config.py, hybrid_MPS.py
 
 import numpy as np
 import torch

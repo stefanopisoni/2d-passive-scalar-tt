@@ -20,7 +20,20 @@ Likewise, stencil coefficients are always passed explicitly rather than letting
 """
 from __future__ import annotations
 
+import os
 import sys
+
+# This package lives one level below the repository root, which still holds the
+# paper-side modules it depends on (config.py for TENSNET_SRC, hybrid_MPS.py for
+# the legacy encoder).  Put both this directory and the root on sys.path so the
+# modules import the same way whether they are run as scripts, imported from a
+# test, or imported from the repository root.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(_HERE)
+for _p in (_HERE, _ROOT):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
 from typing import Dict, List, Sequence
 
 import torch

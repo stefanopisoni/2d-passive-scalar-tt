@@ -25,9 +25,15 @@ figure4.py           Fig. 4  flatness vs compression ratio rho
 figure5.py           Fig. 5  dependence on the hybrid head size L_h  (Appendix B)
 statistics/          Cached averaged statistics (.pt) + CSVs — enough to replot everything
 figures/             Final paper figures (PNG + PDF)
+time_evolution/      Follow-on work: evolving a field in the hybrid TT representation.
+                     Not part of the paper; see time_evolution/README.md
 ```
 
 (Paper Fig. 3 is a schematic and has no script; there is intentionally no `figure3.py`.)
+
+Everything outside `time_evolution/` is paper material. That directory depends on
+`config.py` and `hybrid_MPS.py`, but nothing here depends on it, so the paper
+figures can be reproduced without it.
 
 ## Reproducing the figures
 
