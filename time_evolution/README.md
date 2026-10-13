@@ -101,6 +101,18 @@ much does the head buy me".
 `results/` is git-ignored: the `.npz` files are a few MB each and regenerate from
 the scripts.
 
+## Running on the cluster
+
+`cluster/submit_ladder.slurm` runs the L=10/11/12 ladder as a Slurm array on
+`login.qrccluster.com`. The code is **rsynced, not cloned** — `origin/main` is
+far behind the local tree, so a clone gets none of this directory.
+
+Run **single-threaded**. This is not a tuning preference: a step is thousands of
+small contractions and SVDs, so asking for 4 threads instead of 1 measured 29x
+*slower* per step on a 256-core node (and 43x on the hot einsum alone).
+`run_decaying_cellular.py` pins `torch.set_num_threads` itself; set
+`PSCALAR_THREADS` to override. One core per task, wide array.
+
 ## Conventions
 
 `L` = bits per axis (grid `2^L x 2^L`); `2L` interleaved Morton legs with even legs

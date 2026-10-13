@@ -59,12 +59,23 @@ for _p in (_HERE, _ROOT):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+# This workload is thousands of *small* contractions and SVDs per step, not a
+# few large ones, so each operation is far too small to amortise thread
+# dispatch. Measured on a 256-core cluster node: asking for 4 threads instead of
+# 1 makes the hot einsum in _apply_core 43x slower (0.14 -> 5.9 ms) and the whole
+# step 29x slower (613 -> 19869 ms at L=8, chi=32). One thread per process, many
+# processes, is the right shape -- hence torch is pinned here rather than left to
+# infer a thread count from the machine it lands on.
+torch.set_num_threads(int(os.environ.get("PSCALAR_THREADS", "1")))
+
 import hybrid_ops as ho
 import hybrid_operators as hop
 import hybrid_evolve as hev
 from spectral_tools import compute_isotropic_spectrum_2d
 
-RESULTS = os.path.join(_HERE, "results")
+# Overridable so cluster jobs can write to a scratch/run root instead of
+# into the repository tree.
+RESULTS = os.environ.get("PSCALAR_RESULTS", os.path.join(_HERE, "results"))
 
 # accuracies at which the intrinsic rank of the true solution is probed
 EPS_PROBE = (1e-6, 1e-4, 1e-2)

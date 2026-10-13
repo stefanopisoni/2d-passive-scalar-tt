@@ -28,7 +28,8 @@ FIGS = os.path.join(_HERE, "figures")
 N_COLOR = {0: "k", 4: "#1f77b4", 6: "#2ca02c", 8: "#d62728", 10: "#9467bd"}
 N_LABEL = {0: "standard ($N{=}0$)", 4: "$N{=}4$", 6: "$N{=}6$", 8: "$N{=}8$",
            10: "$N{=}10$"}
-L_MARKER = {8: "o", 9: "s"}
+L_MARKER = {7: "^", 8: "o", 9: "s", 10: "D", 11: "v"}
+L_COLOR = {7: "#8c564b", 8: "#1f77b4", 9: "#d62728", 10: "#2ca02c", 11: "#9467bd"}
 plt.rcParams.update({"font.size": 9, "axes.grid": True, "grid.alpha": 0.3,
                      "figure.dpi": 140, "savefig.bbox": "tight",
                      "legend.frameon": False})
@@ -85,6 +86,11 @@ def interp_rho(rows, errs):
                             left=np.nan, right=np.nan))
 
 
+def _mfc(L, Ls, N):
+    """Filled markers for the coarsest resolution, open for the rest."""
+    return N_COLOR.get(N, "0.5") if L == Ls[0] else "none"
+
+
 def main():
     os.makedirs(FIGS, exist_ok=True)
     data = collect()
@@ -92,27 +98,33 @@ def main():
         raise SystemExit("no runs found")
     Ls = sorted({L for (L, _) in data})
 
+    # One rate-distortion panel per resolution, newest three if there are more,
+    # then the shared panels. The cost panel is dropped when the grid is full.
+    n_rd = min(len(Ls), 3)
+    show = Ls[-n_rd:]
     fig = plt.figure(figsize=(11.5, 6.8))
     gs = fig.add_gridspec(2, 3, hspace=0.42, wspace=0.32)
+    slots = iter([gs[1, 0], gs[1, 1], gs[1, 2]][: 3 - (n_rd - 3) if n_rd < 3 else 3])
 
-    # --- rate-distortion at each resolution
-    for i, L in enumerate(Ls[:2]):
+    for i, L in enumerate(show):
         ax = fig.add_subplot(gs[0, i])
         for N in sorted({n for (ll, n) in data if ll == L}):
             r = data[(L, N)]
             ax.loglog([x["rho"] for x in r], [x["err"] for x in r], "-o", ms=4,
-                      lw=1.4, color=N_COLOR[N], label=N_LABEL[N])
+                      lw=1.4, color=N_COLOR.get(N, "0.5"),
+                      label=N_LABEL.get(N, f"$N{{=}}{N}$"))
         ax.set_xlabel(r"$\rho$"); ax.set_ylabel(r"$L_2$ error")
         ax.legend(fontsize=6.5)
         ax.set_title(rf"evolution error, $L={L}$ (${2**L}^2$)", fontsize=9)
+    for j in range(n_rd, 3):
+        slots = iter([gs[0, j]] + list(slots))
 
-    # --- the practical gain: parameters saved at a fixed accuracy.
-    # The error ratio at fixed rho is the same gap read down a steep axis and
-    # comes out 10x larger; it is printed in the table, not plotted here, so the
-    # two cannot be mistaken for each other.
-    ax = fig.add_subplot(gs[0, 2])
+    # --- parameters saved at a fixed accuracy. The error ratio at fixed rho is
+    # the same gap read down a much steeper axis and comes out ~10x larger; it is
+    # printed in the table, not plotted, so the two cannot be confused.
+    ax = fig.add_subplot(next(slots))
     errs = np.logspace(-3.5, -0.5, 40)
-    for L, c in zip(Ls, ("#1f77b4", "#d62728")):
+    for L in Ls:
         Ns = sorted({n for (ll, n) in data if ll == L})
         if 0 not in Ns:
             continue
@@ -120,59 +132,49 @@ def main():
         std_r = interp_rho(data[(L, 0)], errs)
         best_r = np.nanmin(np.vstack([interp_rho(data[(L, N)], errs)
                                       for N in hyb]), axis=0)
-        ax.semilogx(errs, std_r / best_r, "-", lw=1.8, color=c,
+        ax.semilogx(errs, std_r / best_r, "-", lw=1.8, color=L_COLOR.get(L, "0.5"),
                     label=rf"$L={L}$ (${2**L}^2$)")
     ax.axhline(1.0, color="0.4", ls="--", lw=1)
     ax.set_ylim(0, None)
     ax.set_xlabel(r"target $L_2$ error")
     ax.set_ylabel(r"$\rho_{\rm std}/\rho_{\rm hybrid}$")
-    ax.legend(fontsize=7)
+    ax.legend(fontsize=6.5)
     ax.set_title("parameters saved at fixed accuracy", fontsize=9)
 
-    # --- does representation predict evolution?
-    ax = fig.add_subplot(gs[1, 0])
+    # --- does the cheap measurement predict the expensive one?
+    ax = fig.add_subplot(next(slots))
     for (L, N), rows in sorted(data.items()):
         ax.loglog([x["repr"] for x in rows], [x["err"] for x in rows],
-                  L_MARKER.get(L, "^"), ms=5, color=N_COLOR[N],
-                  mfc="none" if L != Ls[0] else N_COLOR[N], lw=0,
-                  label=f"$L={L}$, {N_LABEL[N]}")
+                  L_MARKER.get(L, "o"), ms=5, color=N_COLOR.get(N, "0.5"),
+                  mfc=_mfc(L, Ls, N), lw=0, label=f"$L={L}$, {N_LABEL.get(N, N)}")
     lim = np.array([1e-5, 1e0])
     for k, ls in ((1, "-"), (3, "--"), (5, ":")):
         ax.plot(lim, k * lim, ls, color="0.5", lw=1)
-        ax.text(lim[1], k * lim[1], f" {k}x", fontsize=6, color="0.5",
-                va="center", ha="right")
     ax.set_xlim(2e-5, 0.3); ax.set_ylim(2e-5, 1.5)
     ax.set_xlabel("representation error"); ax.set_ylabel("evolution error")
-    ax.legend(fontsize=5, ncol=2)
-    ax.set_title("representation predicts evolution", fontsize=9)
+    ax.legend(fontsize=4.5, ncol=2)
+    ax.set_title("representation predicts evolution (1x, 3x, 5x)", fontsize=9)
 
     # --- variance, the bulk statistic
-    ax = fig.add_subplot(gs[1, 1])
+    ax = fig.add_subplot(next(slots))
     for (L, N), rows in sorted(data.items()):
         ax.loglog([x["rho"] for x in rows], [x["var_err"] for x in rows],
-                  "-" + L_MARKER.get(L, "^"), ms=4, lw=1.2, color=N_COLOR[N],
-                  mfc="none" if L != Ls[0] else N_COLOR[N],
-                  label=f"$L={L}$, {N_LABEL[N]}")
+                  "-" + L_MARKER.get(L, "o"), ms=4, lw=1.2,
+                  color=N_COLOR.get(N, "0.5"), mfc=_mfc(L, Ls, N),
+                  label=f"$L={L}$, {N_LABEL.get(N, N)}")
     ax.set_xlabel(r"$\rho$")
     ax.set_ylabel(r"$|\Delta\langle\theta^2\rangle|/\langle\theta^2\rangle$")
-    ax.legend(fontsize=5, ncol=2); ax.set_title("variance error", fontsize=9)
-
-    # --- cost
-    ax = fig.add_subplot(gs[1, 2])
-    for (L, N), rows in sorted(data.items()):
-        ax.loglog([x["ms"] for x in rows], [x["err"] for x in rows],
-                  "-" + L_MARKER.get(L, "^"), ms=4, lw=1.2, color=N_COLOR[N],
-                  mfc="none" if L != Ls[0] else N_COLOR[N],
-                  label=f"$L={L}$, {N_LABEL[N]}")
-    ax.set_xlabel("ms / step (shared cores)"); ax.set_ylabel(r"$L_2$ error")
-    ax.legend(fontsize=5, ncol=2); ax.set_title("error vs wall-clock", fontsize=9)
+    ax.legend(fontsize=4.5, ncol=2); ax.set_title("variance error", fontsize=9)
 
     fig.suptitle("Hybrid vs standard TT under evolution, across resolution "
                  r"(fixed $\ell_B/\Delta x$)", fontsize=10, y=0.98)
     out = os.path.join(FIGS, "scaleup_comparison.png")
     fig.savefig(out); plt.close(fig)
     print(out)
+    _report(data, Ls)
 
+
+def _report(data, Ls):
     print(f"\n{'L':>3} {'N':>3} {'bd':>4} {'rho':>7} {'evo L2':>9} {'repr L2':>9} "
           f"{'ratio':>6} {'ms/step':>8}")
     for (L, N), rows in sorted(data.items()):
@@ -180,6 +182,7 @@ def main():
             print(f"{L:>3} {N:>3} {x['bd']:>4} {x['rho']:>7.4f} {x['err']:>9.2e} "
                   f"{x['repr']:>9.2e} {x['err']/max(x['repr'],1e-300):>6.1f} "
                   f"{x['ms']:>8.0f}")
+
     print("\nBUDGET SAVED at fixed accuracy (the practical number):")
     print("  err  " + "".join(f"{'L='+str(L):>10s}" for L in Ls))
     for te in (1e-1, 1e-2, 1e-3):
@@ -194,19 +197,19 @@ def main():
             row.append(sr / br)
         print(f"  {te:.0e} " + "".join(f"{v:>10.1f}x" for v in row))
 
-    print("\nERROR RATIO at fixed rho (same curves, steep axis -- larger number,"
+    print("\nERROR RATIO at fixed rho (same curves, steep axis -- bigger number,"
           " same fact):")
     print("  rho  " + "".join(f"{'L='+str(L):>10s}" for L in Ls))
-    for rr in (0.03, 0.05, 0.10, 0.20):
+    for rr in (0.01, 0.03, 0.05, 0.10, 0.20):
         row = []
         for L in Ls:
             Ns = sorted({n for (ll, n) in data if ll == L})
             if 0 not in Ns:
                 row.append(np.nan); continue
-            s = interp_err(data[(L, 0)], np.array([rr]))[0]
-            b = np.nanmin([interp_err(data[(L, N)], np.array([rr]))[0]
-                           for N in Ns if N > 0])
-            row.append(s / b)
+            sv = interp_err(data[(L, 0)], np.array([rr]))[0]
+            bv = np.nanmin([interp_err(data[(L, N)], np.array([rr]))[0]
+                            for N in Ns if N > 0])
+            row.append(sv / bv)
         print(f"  {rr:.2f} " + "".join(f"{v:>10.1f}x" for v in row))
 
 
