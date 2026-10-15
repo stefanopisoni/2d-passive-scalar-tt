@@ -126,12 +126,15 @@ def main():
     errs = np.logspace(-3.5, -0.5, 40)
     for L in Ls:
         Ns = sorted({n for (ll, n) in data if ll == L})
-        if 0 not in Ns:
-            continue
         hyb = [N for N in Ns if N > 0]
+        if 0 not in Ns or not hyb:
+            continue                      # a resolution still missing one side
         std_r = interp_rho(data[(L, 0)], errs)
-        best_r = np.nanmin(np.vstack([interp_rho(data[(L, N)], errs)
-                                      for N in hyb]), axis=0)
+        stack = np.vstack([interp_rho(data[(L, N)], errs) for N in hyb])
+        with np.errstate(invalid="ignore"):
+            best_r = np.where(np.all(np.isnan(stack), axis=0), np.nan,
+                              np.nanmin(np.where(np.isnan(stack), np.inf, stack),
+                                        axis=0))
         ax.semilogx(errs, std_r / best_r, "-", lw=1.8, color=L_COLOR.get(L, "0.5"),
                     label=rf"$L={L}$ (${2**L}^2$)")
     ax.axhline(1.0, color="0.4", ls="--", lw=1)
@@ -184,18 +187,24 @@ def _report(data, Ls):
                   f"{x['ms']:>8.0f}")
 
     print("\nBUDGET SAVED at fixed accuracy (the practical number):")
-    print("  err  " + "".join(f"{'L='+str(L):>10s}" for L in Ls))
-    for te in (1e-1, 1e-2, 1e-3):
+    print("  err      " + "".join(f"{'L='+str(L):>11s}" for L in Ls))
+    # a fine ladder of targets: at the finer grids the standard and hybrid
+    # curves overlap only over a narrow band of error, so a coarse set of
+    # targets falls outside one of them and reports nothing
+    for te in (1e-1, 6e-2, 3e-2, 1e-2, 3e-3, 1e-3):
         row = []
         for L in Ls:
             Ns = sorted({n for (ll, n) in data if ll == L})
-            if 0 not in Ns:
+            cand = [interp_rho(data[(L, N)], np.array([te]))[0]
+                    for N in Ns if N > 0]
+            cand = [c for c in cand if np.isfinite(c)]
+            if 0 not in Ns or not cand:
                 row.append(np.nan); continue
             sr = interp_rho(data[(L, 0)], np.array([te]))[0]
-            br = np.nanmin([interp_rho(data[(L, N)], np.array([te]))[0]
-                            for N in Ns if N > 0])
-            row.append(sr / br)
-        print(f"  {te:.0e} " + "".join(f"{v:>10.1f}x" for v in row))
+            row.append(sr / min(cand))
+        cells = "".join("       --- " if not np.isfinite(v) else f"{v:>10.1f}x"
+                        for v in row)
+        print(f"  {te:7.0e} {cells}")
 
     print("\nERROR RATIO at fixed rho (same curves, steep axis -- bigger number,"
           " same fact):")
@@ -204,12 +213,13 @@ def _report(data, Ls):
         row = []
         for L in Ls:
             Ns = sorted({n for (ll, n) in data if ll == L})
-            if 0 not in Ns:
+            cand = [interp_err(data[(L, N)], np.array([rr]))[0]
+                    for N in Ns if N > 0]
+            cand = [c for c in cand if np.isfinite(c)]
+            if 0 not in Ns or not cand:
                 row.append(np.nan); continue
             sv = interp_err(data[(L, 0)], np.array([rr]))[0]
-            bv = np.nanmin([interp_err(data[(L, N)], np.array([rr]))[0]
-                            for N in Ns if N > 0])
-            row.append(sv / bv)
+            row.append(sv / min(cand))
         print(f"  {rr:.2f} " + "".join(f"{v:>10.1f}x" for v in row))
 
 

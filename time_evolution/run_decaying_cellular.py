@@ -186,16 +186,57 @@ def intrinsic_ranks(f: np.ndarray, L: int, N: int):
 
 
 # --------------------------------------------------------------------------
+# shared dense reference
+# --------------------------------------------------------------------------
+def dense_cache_paths(stem: str):
+    """Fields are kept in a plain .npy so they can be memory-mapped."""
+    return stem + "_fields.npy", stem + "_meta.npz"
+
+
+def sample_schedule(n_steps: int, n_samples: int):
+    """Step indices at which diagnostics are recorded."""
+    every = max(1, n_steps // n_samples)
+    idx = [i for i in range(n_steps + 1) if i % every == 0]
+    if idx[-1] != n_steps:
+        idx.append(n_steps)
+    return every, np.array(idx, dtype=np.int64)
+
+
+def load_dense_cache(stem: str, L: int, kappa: float, n_steps: int, idx):
+    """Memory-map a precomputed dense trajectory, refusing a mismatched one.
+
+    Every run at a given (L, kappa, T, samples) steps the *same* dense
+    reference, and at 4096^2 that costs 56.5 h -- far more than the hybrid
+    evolution it exists to validate. Computing it once and sharing it turns
+    twelve 60-hour jobs into twelve 5-to-25-hour ones.
+    """
+    fp, mp = dense_cache_paths(stem)
+    if not (os.path.exists(fp) and os.path.exists(mp)):
+        return None
+    meta = np.load(mp)
+    ok = (int(meta["L"]) == L and int(meta["n_steps"]) == n_steps
+          and np.allclose(float(meta["kappa"]), kappa, rtol=1e-12)
+          and np.array_equal(meta["idx"], idx))
+    if not ok:
+        raise SystemExit(f"dense cache {fp} does not match this run "
+                         f"(L/kappa/steps/sample grid differ) -- rebuild it")
+    return np.load(fp, mmap_mode="r")
+
+
+# --------------------------------------------------------------------------
 # drivers
 # --------------------------------------------------------------------------
 def run(L: int, N: int, kappa: float, T: float, cfl: float, diff_number: float,
         bd: int, eps: float, dense_only: bool, scheme: str, form: str,
-        n_samples: int, n_snaps: int, label: str):
+        n_samples: int, n_snaps: int, label: str,
+        dense_cache: str = None, build_dense_cache: bool = False):
     n, dx, _, _ = grid(L)
     dt = hev.stable_dt(1.0, 1.0, kappa, dx, cfl=cfl, diff_number=diff_number)
     n_steps = int(round(T / dt))
-    every = max(1, n_steps // n_samples)
+    every, sample_idx = sample_schedule(n_steps, n_samples)
     snap_every = max(1, n_steps // max(n_snaps - 1, 1))
+    cache = (load_dense_cache(dense_cache, L, kappa, n_steps, sample_idx)
+             if dense_cache and not build_dense_cache else None)
 
     f0 = initial_field(L)
     dense = f0.copy()
@@ -211,6 +252,26 @@ def run(L: int, N: int, kappa: float, T: float, cfl: float, diff_number: float,
     uyd = ho.hybrid_to_field(uy, L).numpy()
     d_rhs = hev.dense_variable_rhs(uxd, uyd, dx, kappa=kappa, form=form)
 
+    if build_dense_cache:
+        fields = np.empty((len(sample_idx), n, n), dtype=np.float64)
+        k = 0
+        t0 = time.time()
+        for i in range(n_steps + 1):
+            if k < len(sample_idx) and i == sample_idx[k]:
+                fields[k] = dense
+                k += 1
+            if i == n_steps:
+                break
+            dense = hev.dense_step(dense, d_rhs, dt, scheme)
+        fp, mp = dense_cache_paths(dense_cache)
+        os.makedirs(os.path.dirname(fp) or ".", exist_ok=True)
+        np.save(fp, fields)
+        np.savez(mp, L=L, N=N, kappa=kappa, T=T, dt=dt, n_steps=n_steps,
+                 idx=sample_idx, scheme=scheme, form=form)
+        print(f"[{label}] dense cache: {len(sample_idx)} samples, "
+              f"{fields.nbytes/1e9:.2f} GB, {(time.time()-t0)/3600:.1f} h -> {fp}")
+        return fp
+
     if dense_only:
         h = trunc = h_rhs = None
     else:
@@ -221,9 +282,13 @@ def run(L: int, N: int, kappa: float, T: float, cfl: float, diff_number: float,
                                bd_first=bd, bd_remaining=bd, eps=eps)
 
     rows, snaps, snap_t = [], [], []
+    sample_k = 0
     t0 = time.time()
     for i in range(n_steps + 1):
         if i % every == 0 or i == n_steps:
+            if cache is not None:
+                dense = np.asarray(cache[sample_k])
+            sample_k += 1
             row = dict(t=i * dt)
             row.update({f"ref_{k}": v for k, v in
                         field_diagnostics(dense, kappa, dx, L, N).items()})
@@ -259,7 +324,8 @@ def run(L: int, N: int, kappa: float, T: float, cfl: float, diff_number: float,
             break
         if h is not None:
             h = hev.STEPPERS[scheme](h, h_rhs, dt, trunc)
-        dense = hev.dense_step(dense, d_rhs, dt, scheme)
+        if cache is None:
+            dense = hev.dense_step(dense, d_rhs, dt, scheme)
     wall = time.time() - t0
 
     out = dict(L=L, N=N, kappa=kappa, dt=dt, dx=dx, T=T, n_steps=n_steps,
@@ -303,11 +369,16 @@ def main():
     p.add_argument("--samples", type=int, default=64)
     p.add_argument("--snaps", type=int, default=5)
     p.add_argument("--label", default=None)
+    p.add_argument("--dense-cache", default=None,
+                   help="stem of a shared dense trajectory to use (or build)")
+    p.add_argument("--build-dense-cache", action="store_true",
+                   help="compute the dense trajectory and save it, then exit")
     a = p.parse_args()
     label = a.label or ("dense" if a.dense else
                         f"bd{a.bd}" if a.eps is None else f"eps{a.eps:g}")
     run(a.L, a.N, a.kappa, a.T, a.cfl, a.diff_number, a.bd, a.eps, a.dense,
-        a.scheme, a.form, a.samples, a.snaps, label)
+        a.scheme, a.form, a.samples, a.snaps, label,
+        dense_cache=a.dense_cache, build_dense_cache=a.build_dense_cache)
 
 
 if __name__ == "__main__":

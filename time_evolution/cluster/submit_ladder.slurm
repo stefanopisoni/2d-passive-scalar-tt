@@ -10,8 +10,9 @@
 #SBATCH --time=4-00:00:00
 # One core per task, wide array. Extra threads do not merely fail to help this
 # workload, they actively hurt it: 4 threads instead of 1 measured 29x SLOWER
-# per step on these nodes. %32 leaves plenty of the partition free.
-#SBATCH --array=1-44%32
+# per step on these nodes. L=12 lives in submit_L12.slurm, which needs a shared
+# dense reference first.
+#SBATCH --array=1-32%32
 #SBATCH --output=/nfs/users/stefano.pisoni/pscalar_runs/slurm-%x-%A_%a.out
 #SBATCH --error=/nfs/users/stefano.pisoni/pscalar_runs/slurm-%x-%A_%a.err
 
@@ -48,7 +49,7 @@ mkdir -p "${MPLCONFIGDIR}" "${NUMBA_CACHE_DIR}"
 # One line per array task: L N chi kappa samples
 build_jobs() {
     local L N bd kappa samples
-    for L in 10 11 12; do
+    for L in 10 11; do
         if [[ "${L}" == "10" ]]; then
             kappa=3.125e-4; samples=40
             for N in 0 8 10 12; do for bd in 16 24 32 48 64; do
@@ -58,14 +59,6 @@ build_jobs() {
             # fewer samples: each one recompresses a 2048^2 field three times
             kappa=7.8125e-5; samples=20
             for N in 0 10 12; do for bd in 24 32 48 64; do
-                echo "${L} ${N} ${bd} ${kappa} ${samples}"
-            done; done
-        else
-            # 4096^2. Reachable because a FIXED ACCURACY needs chi ~ 2^(0.34 L),
-            # nearly flat, not the chi ~ 2^L that holding rho fixed would demand.
-            # Measured single-threaded: 7.3 h at chi=24, 13.3 h at chi=32.
-            kappa=1.953125e-5; samples=12
-            for N in 0 10 12; do for bd in 16 24 32 48; do
                 echo "${L} ${N} ${bd} ${kappa} ${samples}"
             done; done
         fi
