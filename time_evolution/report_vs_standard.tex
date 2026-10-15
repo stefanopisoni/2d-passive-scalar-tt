@@ -1,0 +1,256 @@
+\documentclass[aps,prfluids,reprint,onecolumn,amsmath,amssymb,nofootinbib,floatfix]{revtex4-2}
+
+\usepackage{graphicx}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+
+\newcommand{\code}[1]{\texttt{\small #1}}
+\setlist[itemize]{itemsep=1pt, topsep=3pt, parsep=0pt}
+
+\input{tables_vs_standard}
+
+\begin{document}
+
+\title{Hybrid versus standard tensor trains under time evolution:\\
+benchmark of the explicit solver with SVD truncation}
+
+\author{S. Pisoni}
+\affiliation{TN\_Turbulence project --- 2D passive scalar study}
+
+\date{\today}
+
+\begin{abstract}
+The hybrid tensor-train encoding is benchmarked against a standard quantized
+tensor train for the time evolution of a passive scalar, at four resolutions
+from $256^2$ to $2048^2$. Both encodings are advanced by the same explicit
+solver: exact MPO--MPS contraction followed by a two-sweep SVD truncation. At a
+fixed target accuracy the hybrid encoding reaches that accuracy with a factor
+$1.8$--$2.5$ fewer parameters, and the factor is constant across the resolutions
+tested. The head size that achieves it holds half the bits of each axis,
+$N\simeq L$, corresponding to a $2^{L/2}\times 2^{L/2}$ coarse grid represented
+densely and the finer scales carried by the tail. The error made in evolving
+tracks the error of merely representing the same field within a factor $1.5$--$25$
+for every encoding, resolution and budget measured.
+\end{abstract}
+
+\maketitle
+
+\section{Setup}
+
+The benchmark problem is a decaying passive scalar on a periodic square,
+\begin{equation}
+  \partial_t\theta + \mathbf{u}\cdot\nabla\theta = \kappa\nabla^2\theta,
+  \qquad \nabla\cdot\mathbf{u}=0,
+  \label{eq:scalar}
+\end{equation}
+with no forcing, so that the variance budget is
+\begin{equation}
+  \frac{d}{dt}\frac{\langle\theta^2\rangle}{2}
+  = -\kappa\langle|\nabla\theta|^2\rangle .
+  \label{eq:budget}
+\end{equation}
+The velocity is the steady cellular flow obtained from the streamfunction
+$\psi=\sin x\,\sin y$, so $\mathbf{u}=(\sin x\cos y,\,-\cos x\sin y)$. It is
+constructed by applying the solver's own derivative MPOs to the encoded $\psi$,
+which makes it divergence-free to $7\times10^{-13}$ at the discrete level and
+gives it bond dimension $4$. The initial condition is a random-phase
+superposition of all modes with $|\mathbf{k}|\le 2$, normalised to zero mean and
+unit variance.
+
+Space is discretised with second-order centred stencils for both the transport
+and the diffusion terms, and the transport term is written in skew form,
+$\tfrac12$(advective $+$ conservative), which inherits the antisymmetry of the
+continuous operator and conserves $\langle\theta^2\rangle$ to round-off in the
+absence of truncation. Time integration uses SSPRK3 with a step satisfying both
+the advective CFL condition and the two-dimensional diffusive limit
+$\Delta t\le\Delta x^2/4\kappa$.
+
+Resolution is varied at fixed $\ell_B/\Delta x=2.88$ by scaling
+$\kappa\propto\Delta x^2$, anchored at $\kappa=5\times10^{-3}$ for $L=8$, so that
+each resolution resolves the same range of scales. All runs integrate to $T=8$,
+which is past the time at which the truncation error saturates.
+
+Both encodings are advanced by identical code. The standard tensor train is the
+case $N=0$ of the hybrid encoder, verified to reproduce
+\code{tt.vector\_to\_mps(vec,2,2L)} bond for bond. Compression policy,
+contraction order, stencils, velocity, time step and dense reference are shared,
+so the head size is the only variable between the two.
+
+\section{Head size: what $N$ controls}
+
+The field is encoded on $2L$ binary legs in Morton order, even legs carrying the
+row index and odd legs the column index, with level $0$ the most significant bit.
+The head fuses the first $N$ legs into a single dense tensor of physical
+dimension $2^N$; the remaining $2L-N$ legs are ordinary binary cores.
+
+$N$ therefore selects how many of the \emph{most significant} bits of each axis
+are held densely. The head holds $N/2$ bits per axis, which is a
+$2^{N/2}\times2^{N/2}$ grid of coarse blocks, each block spanning
+$2^{L-N/2}$ cells on a side; the structure inside a block is carried by the tail.
+Table~\ref{tab:headsizes} gives the correspondence.
+
+\begin{table}[h]
+\centering
+\TabHeadSizes
+\caption{Head size in terms of the grid it resolves densely. $N=10$ at $L=10$
+holds $5$ of the $10$ bits of each axis, i.e.\ a $32\times32$ coarse grid, with
+the remaining $32\times32$ cells inside each block carried by the tail.}
+\label{tab:headsizes}
+\end{table}
+
+The useful range is $N\simeq L$, i.e.\ half the bits of each axis. The three
+sizes $N\in\{L-2,\,L,\,L+2\}$ bracket the optimum at every resolution measured,
+and the results below are reported on that bracket.
+
+Two distinct normalisations of the head cost are worth separating, since they
+behave differently as $L$ grows (Fig.~\ref{fig:headbudget}). The head occupies
+$2^N\chi_0$ parameters. Relative to the compressed state this is a large and
+increasing share: at $L=10$, $N=10$, $\chi=32$ it is $74\%$ of the stored
+parameters. Relative to the dense field it is $2^N\chi_0/4^L$, which for
+$N\simeq L$ is $\chi_0/2^L$ and therefore decreases with resolution: the same
+configuration stores a head worth $3.1\%$ of the dense field, and the complete
+state worth $4.2\%$.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{figures/head_budget.png}
+\caption{Head cost under both normalisations, and the rate--distortion curves
+from which the optimum is read. Left: share of the compressed state held by the
+head. Centre: head size as a fraction of the dense field, which falls with $L$
+at fixed $N-L$. Right: $L_2$ error against compression ratio $\rho$ for every
+run; $L=10$ drawn solid.}
+\label{fig:headbudget}
+\end{figure}
+
+\section{Rate--distortion}
+
+Bond caps are integers, so the two encodings do not land on identical parameter
+counts. Each encoding is therefore swept over bond caps and reported against the
+compression ratio $\rho=\text{parameters}/4^L$ it achieves.
+Table~\ref{tab:rd} lists every run. The reported error is the relative $L_2$
+difference from a dense reference integrated with the same scheme, step and
+velocity, averaged over the final third of the run, where it has saturated.
+
+Alongside each evolution error is the error of compressing the \emph{exact}
+field at the same budget, which separates the cost of representing the solution
+from the additional cost of evolving in the representation.
+
+\begin{table}[h]
+\centering
+\small
+\TabRateDistortion
+\caption{Every run. $N=0$ is the standard tensor train. ``head\,\%'' is the
+share of the stored parameters occupied by the head.}
+\label{tab:rd}
+\end{table}
+
+\section{Parameters required at fixed accuracy}
+
+The quantity of practical interest is the budget required to reach a given
+accuracy. Table~\ref{tab:saving} reports the ratio
+$\rho_{\mathrm{std}}/\rho_{\mathrm{hybrid}}$, with the head size that achieves
+the smaller budget, obtained by log--log interpolation of $\rho(\text{error})$.
+Targets are listed only where both encodings span the target error.
+
+\begin{table}[h]
+\centering
+\TabBudgetSaving
+\caption{Parameters saved at fixed accuracy, and the head size achieving it.
+The saving is $1.8$--$2.5$ and shows no trend with resolution over
+$256^2$--$2048^2$.}
+\label{tab:saving}
+\end{table}
+
+The error ratio read at fixed $\rho$ instead of fixed accuracy is considerably
+larger --- at $L=10$ it runs from $2.8$ at $\rho=0.01$ to $25$ at $\rho=0.05$ ---
+and it grows with resolution. Both quantities describe the same pair of curves.
+The rate--distortion curves are steep and steepen with $L$, so a horizontal
+offset of a factor $2$ in $\rho$ appears as one to two decades along the error
+axis. The budget ratio is the quantity that answers how many parameters the head
+buys.
+
+\section{Evolution against representation}
+
+Figure~\ref{fig:scaleup} collects the comparison across resolutions. The lower
+middle panel plots the evolution error against the representation error at the
+same budget for every run. All points lie between the $1\times$ and $25\times$
+lines, with most below $5\times$, across four resolutions, five head sizes and
+five bond caps.
+
+The practical consequence is that the ordering of encodings in $N$ and the
+scaling in $L$ can be established by compressing stored fields, which costs
+minutes, rather than by integrating them, which costs core-days. The
+representation measurement does not substitute for the evolution measurement
+when the absolute error level matters.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{figures/scaleup_comparison.png}
+\caption{Top: rate--distortion at $L=9,10,11$. Bottom left: parameters saved at
+fixed accuracy. Bottom centre: evolution error against representation error at
+the same budget, with $1\times$, $3\times$ and $5\times$ guides. Bottom right:
+relative error in $\langle\theta^2\rangle$.}
+\label{fig:scaleup}
+\end{figure}
+
+\section{Cost}
+
+Table~\ref{tab:cost} gives measured cost per step at $\chi=32$. At equal bond
+cap the hybrid encoding is slightly cheaper than the standard one, since it
+carries $2L-N$ tail cores instead of $2L$, while the head contributes
+$O(2^N r^2\chi)$ through the un-fusing path. At equal $\rho$ the comparison is
+closer, because reaching a given $\rho$ with a larger head permits a smaller
+$\chi$.
+
+\begin{table}[h]
+\centering
+\TabCost
+\caption{Measured cost per step at $\chi=32$. Runs shared cluster nodes, so
+absolute values carry scheduling noise; the comparison within a row of constant
+$L$ is the meaningful one.}
+\label{tab:cost}
+\end{table}
+
+All runs are single-threaded. On a 256-core node, four threads instead of one
+measured $29\times$ slower per step, because a step consists of thousands of
+small contractions and SVDs, none large enough to amortise thread dispatch.
+
+\section{Scope of these results}
+
+The measurements above are specific to the flow used. The cellular flow
+$\psi=\sin x\sin y$ has closed streamlines and is integrable, and its scalar
+spectrum is steep, $E_\theta(k)\sim k^{-4.9}$ over $3\le k\le20$, rather than the
+$k^{-1}$ Batchelor form of a chaotic flow. Breaking the streamlines with
+$\psi=\sin(x+B\sin\omega t)\sin y$ raises the rank plateau from $75$ to $84$ at
+$L=8$ and leaves the spectrum steep.
+
+The size of the hybrid advantage depends on the field. On random-phase fields of
+prescribed spectral slope the same measurement gives $1.2$ at $k^{-5/3}$ and
+$3.5$ at $k^{-5}$, against $5$--$24$ at fixed $\rho$ for the cellular field. The
+difference is attributable to spatial coherence rather than to spectral slope or
+to alignment with the dyadic block boundaries: rigid shifts of the field by $2$,
+$4$, $8$ and $13$ cells leave the advantage unchanged.
+
+Real turbulent scalar fields lie between the two cases. The representation
+measurements on DNS data reported in the paper remain the reference point for
+what to expect there; the contribution of the present benchmark is that the
+advantage measured for representation is preserved under evolution.
+
+\section{Configuration}
+
+\begin{itemize}
+\item Grids $2^L\times2^L$ with $L=8,9,10,11$; $\kappa=5\times10^{-3}$,
+  $1.25\times10^{-3}$, $3.125\times10^{-4}$, $7.8125\times10^{-5}$.
+\item $\Delta t=0.2\,\Delta x$ (CFL-limited at every resolution), $T=8$, giving
+  $1630$, $3259$, $6519$ and $13038$ steps.
+\item Head sizes $N\in\{0,4,6,8,10,12\}$, bond caps $\chi\in\{4,\dots,64\}$
+  applied uniformly as \code{bd\_first}~$=$~\code{bd\_remaining}, with
+  \code{renormalize}~$=$~\code{False} so that truncated norm is not restored.
+\item $69$ runs in total; the $L=10$ and $L=11$ sets were run as Slurm arrays,
+  one core per task.
+\end{itemize}
+
+\end{document}
