@@ -93,6 +93,17 @@ def grid(L: int):
     return n, dx, XX, YY
 
 
+def forcing_field(L: int, amp: float, kf: int = 1) -> np.ndarray:
+    """Steady large-scale source, f = amp * sin(kf * y).
+
+    Without a source the scalar simply decays, so the statistics describe a
+    transient. A source held fixed in time lets <theta^2> settle where
+    production <theta f> balances dissipation kappa<|grad theta|^2>.
+    """
+    _, _, _, YY = grid(L)
+    return amp * np.sin(kf * YY)
+
+
 def initial_field(L: int, kmax: int = 2, seed: int = 7) -> np.ndarray:
     """Random superposition of modes with |k| <= kmax, zero mean, unit variance.
 
@@ -124,8 +135,17 @@ def geometric_bond_bounds(L: int, N: int):
                      for cut in range(N, n_legs)], dtype=np.int64)
 
 
-def build_velocity(L: int, N: int, dx: float):
-    """(ux, uy) from psi = sin x sin y, via the solver's own derivative MPOs.
+def build_velocity(L: int, N: int, dx: float, source: str = "cellular",
+                   psi_eps: float = 1e-2, psi_path: str = None):
+    """(ux, uy) from a streamfunction, via the solver's own derivative MPOs.
+
+    ``source="cellular"`` uses psi = sin x sin y, which is exactly rank 2 and
+    needs no truncation. ``source="dns"`` loads a streamfunction obtained from a
+    DNS velocity snapshot (vorticity inverted spectrally, then coarsened) and
+    compresses it at ``psi_eps``: a real 2-D turbulent streamfunction is close to
+    full rank, saturating the geometric bound at eps = 1e-6 and costing more
+    parameters than the dense field, so it is only usable in truncated form.
+    The truncation is a modelling choice and is recorded in the run file.
 
     Differentiating the streamfunction discretely makes the velocity
     divergence-free to round-off (measured: 7e-13), which is what the skew form
@@ -133,10 +153,22 @@ def build_velocity(L: int, N: int, dx: float):
     instead leaves an O(dx^2) divergence.  The truncation is tight and the
     result has bond dimension 4.
     """
-    _, _, XX, YY = grid(L)
-    psi = ho.field_to_hybrid(torch.from_numpy(np.sin(XX) * np.sin(YY)),
-                             L, N, bd_first=None, eps=1e-13)
-    tight = hev.Truncation(eps=1e-12, bd_first=16, bd_remaining=16)
+    if source == "cellular":
+        _, _, XX, YY = grid(L)
+        psi_d = np.sin(XX) * np.sin(YY)
+        eps, cap = 1e-13, 16
+    elif source == "dns":
+        if psi_path is None:
+            psi_path = os.path.join(RESULTS, f"psi_dns_L{L}.npy")
+        psi_d = np.load(psi_path)
+        if psi_d.shape != (2 ** L, 2 ** L):
+            raise ValueError(f"{psi_path} is {psi_d.shape}, expected {2**L}^2")
+        eps, cap = psi_eps, 256
+    else:
+        raise ValueError(f"unknown velocity source {source!r}")
+    psi = ho.field_to_hybrid(torch.from_numpy(np.ascontiguousarray(psi_d)),
+                             L, N, bd_first=None, eps=eps)
+    tight = hev.Truncation(eps=1e-10, bd_first=cap, bd_remaining=cap)
     return hev.velocity_from_streamfunction(psi, L, N, dx, trunc=tight)
 
 
@@ -229,9 +261,26 @@ def load_dense_cache(stem: str, L: int, kappa: float, n_steps: int, idx):
 def run(L: int, N: int, kappa: float, T: float, cfl: float, diff_number: float,
         bd: int, eps: float, dense_only: bool, scheme: str, form: str,
         n_samples: int, n_snaps: int, label: str,
-        dense_cache: str = None, build_dense_cache: bool = False):
+        dense_cache: str = None, build_dense_cache: bool = False,
+        forcing_amp: float = 0.0, forcing_k: int = 1,
+        velocity: str = "cellular", psi_eps: float = 1e-2):
     n, dx, _, _ = grid(L)
-    dt = hev.stable_dt(1.0, 1.0, kappa, dx, cfl=cfl, diff_number=diff_number)
+
+    # The dense reference must be driven by *exactly* the velocity the hybrid
+    # solver sees, which is the streamfunction differentiated discretely -- not
+    # the analytic sin/cos.  The two differ by only 1e-4 pointwise, but that
+    # difference drives the two solutions apart linearly in time: measured, it
+    # reaches 9.3e-4 by t=16, which is ~100x the adaptive run's truncation error
+    # and would masquerade as a steadily *drifting* truncation error.
+    ux, uy = build_velocity(L, N, dx, source=velocity, psi_eps=psi_eps)
+    uxd = ho.hybrid_to_field(ux, L).numpy()
+    uyd = ho.hybrid_to_field(uy, L).numpy()
+
+    # The timestep follows the velocity actually built. The cellular flow has
+    # |u| <= 1, but a DNS snapshot does not, and taking the CFL limit from an
+    # assumed unit speed would overshoot it by that factor.
+    umax = float(max(np.abs(uxd).max(), np.abs(uyd).max()))
+    dt = hev.stable_dt(umax, umax, kappa, dx, cfl=cfl, diff_number=diff_number)
     n_steps = int(round(T / dt))
     every, sample_idx = sample_schedule(n_steps, n_samples)
     snap_every = max(1, n_steps // max(n_snaps - 1, 1))
@@ -240,17 +289,14 @@ def run(L: int, N: int, kappa: float, T: float, cfl: float, diff_number: float,
 
     f0 = initial_field(L)
     dense = f0.copy()
-
-    # The dense reference must be driven by *exactly* the velocity the hybrid
-    # solver sees, which is the streamfunction differentiated discretely -- not
-    # the analytic sin/cos.  The two differ by only 1e-4 pointwise, but that
-    # difference drives the two solutions apart linearly in time: measured, it
-    # reaches 9.3e-4 by t=16, which is ~100x the adaptive run's truncation error
-    # and would masquerade as a steadily *drifting* truncation error.
-    ux, uy = build_velocity(L, N, dx)
-    uxd = ho.hybrid_to_field(ux, L).numpy()
-    uyd = ho.hybrid_to_field(uy, L).numpy()
-    d_rhs = hev.dense_variable_rhs(uxd, uyd, dx, kappa=kappa, form=form)
+    if forcing_amp:
+        f_dense = forcing_field(L, forcing_amp, forcing_k)
+        f_hyb = ho.field_to_hybrid(torch.from_numpy(f_dense), L, N,
+                                   bd_first=None, eps=1e-13)
+    else:
+        f_dense = f_hyb = None
+    d_rhs = hev.dense_variable_rhs(uxd, uyd, dx, kappa=kappa, form=form,
+                                   forcing=f_dense)
 
     if build_dense_cache:
         fields = np.empty((len(sample_idx), n, n), dtype=np.float64)
@@ -277,7 +323,7 @@ def run(L: int, N: int, kappa: float, T: float, cfl: float, diff_number: float,
     else:
         trunc = hev.Truncation(eps=eps, bd_first=bd, bd_remaining=bd)
         h_rhs = hev.variable_rhs(ux, uy, L, N, dx, kappa=kappa, form=form,
-                                 trunc=trunc)
+                                 forcing=f_hyb, trunc=trunc)
         h = ho.field_to_hybrid(torch.from_numpy(f0), L, N,
                                bd_first=bd, bd_remaining=bd, eps=eps)
 
@@ -332,6 +378,8 @@ def run(L: int, N: int, kappa: float, T: float, cfl: float, diff_number: float,
                scheme=scheme, form=form, label=label, wall=wall,
                bd=-1 if bd is None else bd, eps=-1.0 if eps is None else eps,
                dense_only=dense_only,
+               forcing_amp=forcing_amp, forcing_k=forcing_k,
+               velocity=velocity, psi_eps=psi_eps, umax=umax,
                bond_bound=geometric_bond_bounds(L, N),
                n_cells=4 ** L, snaps=np.array(snaps), snap_t=np.array(snap_t),
                eps_probe=np.array(EPS_PROBE))
@@ -373,12 +421,20 @@ def main():
                    help="stem of a shared dense trajectory to use (or build)")
     p.add_argument("--build-dense-cache", action="store_true",
                    help="compute the dense trajectory and save it, then exit")
+    p.add_argument("--forcing-amp", type=float, default=0.0,
+                   help="amplitude of a steady source f = amp*sin(k y)")
+    p.add_argument("--forcing-k", type=int, default=1)
+    p.add_argument("--velocity", choices=("cellular", "dns"), default="cellular")
+    p.add_argument("--psi-eps", type=float, default=1e-2,
+                   help="truncation of the DNS streamfunction")
     a = p.parse_args()
     label = a.label or ("dense" if a.dense else
                         f"bd{a.bd}" if a.eps is None else f"eps{a.eps:g}")
     run(a.L, a.N, a.kappa, a.T, a.cfl, a.diff_number, a.bd, a.eps, a.dense,
         a.scheme, a.form, a.samples, a.snaps, label,
-        dense_cache=a.dense_cache, build_dense_cache=a.build_dense_cache)
+        dense_cache=a.dense_cache, build_dense_cache=a.build_dense_cache,
+        forcing_amp=a.forcing_amp, forcing_k=a.forcing_k,
+        velocity=a.velocity, psi_eps=a.psi_eps)
 
 
 if __name__ == "__main__":
