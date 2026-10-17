@@ -92,6 +92,18 @@ discarded: it is incompressible but degenerate, in that the advective and
 conservative discretisations coincide identically, so it cannot distinguish the
 transport forms at all.
 
+A frozen DNS velocity snapshot has since been added as a third case. The
+streamfunction is recovered from the stored $v_x,v_y$ at $4096^2$ by inverting
+the vorticity spectrally, coarsened to the target grid, and differentiated with
+the solver's own MPOs. Its rank behaviour differs sharply from the cellular
+flow: at $L=9$ and $\epsilon=10^{-6}$ the streamfunction saturates the geometric
+bond bound and its tensor train costs more parameters than the dense field
+($\rho=1.33$, and $2.32$ at $L=10$). It becomes compressible only at much looser
+tolerance, $\epsilon=10^{-2}$ giving bond $21$ at $\rho=0.084$ for a $1.7\%$ error
+in $\psi$. Runs with the DNS velocity therefore use a truncated velocity field,
+which is a modelling choice recorded in each run file; the derived velocity
+carries bond $34$ against $4$ for the cellular flow.
+
 The velocity is built from $\psi$ with the solver's own stencils,
 $\mathbf{u} = (\mathsf{D}_y\psi,\ -\mathsf{D}_x\psi)$, which makes it
 divergence-free to round-off at the \emph{discrete} level since $\mathsf{D}_x$
@@ -346,6 +358,44 @@ hybrid shapes at all.
       discretisation forms it is meant to separate coincide identically.
 \end{itemize}
 
+\paragraph{The hybrid advantage survives evolution, and is a factor of about
+two in parameters.} Benchmarked against a standard tensor train (the $N=0$ case
+of the same encoder, verified to reproduce \code{tt.vector\_to\_mps} bond for
+bond) at four resolutions from $256^2$ to $2048^2$: at a fixed target accuracy
+the hybrid encoding needs $1.8$--$2.5$ times fewer parameters, with no trend in
+resolution. The useful head sizes are $N\simeq L$, i.e.\ half the bits of each
+axis, and $N\in\{L-2,L,L+2\}$ brackets the optimum everywhere measured. Full
+tables are in the companion report \code{report\_vs\_standard.pdf}.
+
+\paragraph{Representation error predicts evolution error.} Across four
+resolutions, five head sizes and five bond caps, the error made in evolving a
+field lies within a factor $1.5$--$25$ of the error of merely compressing the
+same field at the same budget, with most points below $5$. Measuring the
+ordering in $N$ and the scaling in $L$ by compression therefore costs minutes
+where integration costs core-days.
+
+\paragraph{The published compressed fields are plain truncation times a global
+scalar, confirmed on the data.} \code{tt.svd} defaults to
+\code{renormalize=True}, which rescales the kept singular values at every split.
+On \code{theta.00059} at $4096^2$ the stored hybrid fields equal the plain
+rank-truncated field times one scalar $c$ to $1.2$--$3.5\times10^{-14}$. The
+norm is preserved exactly, $E(1)$ shifts by exactly $c^2$ --- $+2.7\%$ at
+$\rho=0.014$, falling to $+0.04\%$ at $\rho=0.64$ --- and the gradient flatness
+ratio is $1.0000$, so every scale-invariant statistic is unaffected.
+
+\paragraph{The solver must run single-threaded.} A step is thousands of small
+contractions and SVDs, none large enough to amortise thread dispatch. On a
+256-core node, four threads instead of one measured the hot einsum in
+\code{\_apply\_core} $43\times$ slower and a whole step $29\times$ slower. The
+earlier observation that thread count stopped mattering after the move to LAPACK
+understates it: on many-core hardware extra threads are actively harmful.
+
+\paragraph{Forcing at the largest scale does not equilibrate.} The approach to a
+statistically steady state is set by the diffusive time of the forced scale,
+$1/(\kappa k_f^2)$, which is $200$ time units at $k_f=1$ and was still climbing
+at $t=90$ for every amplitude tried. At $k_f=4$ that time is $12$ and the
+variance plateaus by $t\simeq40$.
+
 \section{Corrections to earlier statements}
 
 Recorded because the reasoning matters more than the conclusions:
@@ -380,46 +430,67 @@ Recorded because the reasoning matters more than the conclusions:
       fixed step count.
 \end{itemize}
 
+\paragraph{How the hybrid advantage was quoted.} It was first reported as
+``$7.6\times$, $21\times$, $90\times$ at $\rho=0.2$, growing with resolution''.
+That is the error ratio at a fixed budget, a vertical cut through the
+rate--distortion curve, and it is inflated by the steepness of those curves,
+increasingly so at larger $L$. Read as the budget needed for a fixed accuracy
+the saving is $1.8$--$2.5$ and flat in $L$. Both describe the same pair of
+curves; the budget ratio is the one that answers how many parameters the head
+buys.
+
+\paragraph{Reachability of $4096^2$.} It was described as out of reach. That
+assumed a fixed compression ratio, which requires $\chi\sim2^L$. For a fixed
+\emph{accuracy} the measured requirement is $\chi\sim2^{0.34L}$, nearly flat
+($\chi = 6, 12, 16, 12$ for $L=7\ldots10$ at $L_2=10^{-2}$), and a step at
+$4096^2$ was measured at $7.3$~h for $\chi=24$ with a peak resident set of
+1.4~GB.
+
 \section{Status and next steps}
 
 \paragraph{Done.} The validated baseline is committed and separated from the
-paper material. The cellular-flow cascade has been run and answers the central
-question: the rank saturates. The dissipation comparison, which came with it,
-shows truncation dissipation to be negligible against molecular diffusion, so the
-conditional TDVP upgrade is not currently warranted. Compression performance has
-been profiled and improved by about an order of magnitude.
+paper material. The cellular-flow cascade answers the central question: the
+intrinsic rank rises as fine scales are generated and then saturates, flat for
+twelve time units while the variance decays sevenfold, at ranks well below the
+geometric bound. Truncation dissipation is negligible against molecular
+diffusion, so the conditional TDVP upgrade remains unwarranted. Compression was
+profiled and improved by about an order of magnitude, and the whole campaign now
+runs as Slurm arrays. The hybrid encoding has been benchmarked against a
+standard tensor train at four resolutions (companion report
+\code{report\_vs\_standard.pdf}), and the deferred renormalisation check has
+been settled on the published data.
 
 \begin{enumerate}[leftmargin=*]
-\item \textbf{A properly forced steady state.} The cascade run so far decays;
-      the forcing needs to be far stronger to reach the statistically steady
-      regime the paper's statistics describe. Cheap now that a run costs minutes
-      rather than hours. \emph{Settles:} whether the rank plateau survives in a
-      sustained cascade rather than a decaying one.
+\item \textbf{The DNS-velocity ladder}, at $512^2$ with a frozen velocity
+      snapshot. The decisive case: the cellular flow is integrable and its
+      scalar spectrum is steep, $E_\theta\sim k^{-4.9}$, so it is a weak proxy
+      for turbulence, and the measured hybrid advantage drops from $5$--$24$ on
+      that field to $1.2$ on random-phase $k^{-5/3}$ fields. \emph{Settles:}
+      what the factor of two becomes on a realistic field, and whether the rank
+      still saturates when the straining is genuinely turbulent.
 
-\item \textbf{Hybrid versus standard TT at matched compression.} The actual
-      scientific claim and the true sequel to the paper: does the hybrid encoding
-      reproduce intermittency statistics \emph{under evolution} better than a
-      standard TT at equal $\rho$? Needs a standard-TT evolution path, the
-      existing degree-of-freedom matching, and the paper's diagnostics recast as
-      functions of time. Compression quality does not imply dynamical quality;
-      this is what measures it. The observation that variance survives rank
-      starvation far better than pointwise accuracy makes the outcome genuinely
-      uncertain, and therefore worth measuring.
+\item \textbf{The forced steady state}, at $256^2$ with $f=0.8\sin 4y$.
+      \emph{Settles:} whether the rank plateau survives in a sustained cascade
+      rather than a decaying transient.
 
-\item \textbf{Scale to the production geometry} ($4096^2$). Use the un-fusing
-      head path: the fused head is dense for summed operators and does not scale.
-      Two further compression optimisations remain in reserve --- fusing operator
-      application with truncation, and tracking the canonical gauge to skip a
-      sweep --- worth perhaps another factor of two, and more relevant at this
-      size than at $128^2$.
+\item \textbf{The production geometry} ($4096^2$), held rather than blocked.
+      A step costs $7.3$~h at $\chi=24$ and the shared dense-reference cache is
+      written and verified bit-identical; what is missing is a reason to spend
+      the three days, which the two runs above may supply.
 
-\item \textbf{Real DNS velocity fields}, together with the deferred check of the
-      renormalisation effect on the published figures. Both need the dataset.
+\item \textbf{2D Navier--Stokes in vorticity form.} Reuses the whole stack apart
+      from the Poisson inversion recovering $\mathbf{u}$ from $\omega$, and makes
+      the transport term genuinely nonlinear, with two quadratic invariants that
+      truncation will damage at different rates.
 
-\item \textbf{Conditional, and currently not indicated: TDVP or implicit
-      stepping.} The dissipation measurement argues against the former for now;
-      the latter becomes necessary only if the diffusive timestep restriction
-      starts to bite at production resolution.
+\item \textbf{Conditional: implicit stepping, with variational or sketched
+      products.} The timestep is CFL-limited and an implicit scheme would remove
+      that restriction, at which point AMEn stops being an optimisation of the
+      MPO--MPS product and becomes the enabling solver for the linear system.
+      Sketched products suit the many-small-SVD shape of this workload but
+      replace a certified singular-value tail with a probabilistic bound, which
+      the present methodology relies on. Neither is indicated while the explicit
+      solver with SVD truncation is still producing results.
 \end{enumerate}
 
 \paragraph{Beyond the passive scalar.} The natural extension is 2D
