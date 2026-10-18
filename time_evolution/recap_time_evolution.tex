@@ -396,6 +396,28 @@ $1/(\kappa k_f^2)$, which is $200$ time units at $k_f=1$ and was still climbing
 at $t=90$ for every amplitude tried. At $k_f=4$ that time is $12$ and the
 variance plateaus by $t\simeq40$.
 
+\paragraph{The rank plateau survives both a steady state and a turbulent
+velocity.} In the forced cellular run at $256^2$ the variance plateaus by
+$t\simeq36$ (within $1.3\%$ thereafter) and the intrinsic rank rises from $12$
+to a peak of $56$ and settles at $41.9\pm0.6$ against a geometric bound of
+$256$. Advected by a frozen DNS velocity snapshot at $512^2$ the rank rises
+within a tenth of a time unit and holds at $315\pm1.1$ at $\epsilon=10^{-6}$
+($61\%$ of the bound), $154$ at $10^{-4}$ and $34$ at $10^{-2}$, flat for the
+remaining $22$ eddy turnover times.
+
+\paragraph{With a turbulent velocity the evolution error stops being monotone in
+the bond cap.} In every cellular run, decaying or forced, the error falls
+monotonically as $\chi$ grows. Under the DNS velocity it does not: at $N=10$ the
+$L_2$ error runs $7.7\times10^{-2}$, $1.5\times10^{-1}$, $2.9\times10^{-2}$,
+$1.9\times10^{-3}$ for $\chi=16,24,32,48$, and the variance error is
+non-monotone at $N=8$, $10$ and $12$. The representation error at the same
+budgets remains monotone in every case, so the effect belongs to the dynamics
+rather than to the encoding. The consequence is practical: the rate--distortion
+framing used for the cellular benchmark does not transfer directly, and a single
+$(N,\chi)$ pair cannot be ranked by its budget alone. The ratio of evolution to
+representation error widens correspondingly, from $1.5$--$25$ for the cellular
+flow to $1.5$--$233$ here.
+
 \section{Corrections to earlier statements}
 
 Recorded because the reasoning matters more than the conclusions:
