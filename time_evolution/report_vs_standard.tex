@@ -33,7 +33,11 @@ tested. The head size that achieves it holds half the bits of each axis,
 $N\simeq L$, corresponding to a $2^{L/2}\times 2^{L/2}$ coarse grid represented
 densely and the finer scales carried by the tail. The error made in evolving
 tracks the error of merely representing the same field within a factor $1.5$--$25$
-for every encoding, resolution and budget measured.
+for every encoding, resolution and budget measured. Two further flows are
+reported: a forced cellular flow, in which the rank plateau found in the
+decaying cascade persists in a statistically steady state, and a frozen DNS
+velocity snapshot, under which the rank also plateaus but the evolution error
+ceases to be monotone in the bond cap while the representation error remains so.
 \end{abstract}
 
 \maketitle
@@ -218,6 +222,97 @@ All runs are single-threaded. On a 256-core node, four threads instead of one
 measured $29\times$ slower per step, because a step consists of thousands of
 small contractions and SVDs, none large enough to amortise thread dispatch.
 
+\section{Forced steady state}
+
+The results above are obtained in a decaying cascade. To check that they are not
+an artefact of the transient, the cellular flow was rerun at $256^2$ with a
+steady source $f=0.8\sin 4y$ to $T=60$.
+
+The forced wavenumber matters. The approach to a statistically steady state is
+governed by the diffusive time of the forced scale, $1/(\kappa k_f^2)$, which is
+$200$ time units at $k_f=1$; amplitudes from $0.02$ to $0.05$ were all still
+climbing at $t=90$. At $k_f=4$ that time is $12$, and the variance plateaus by
+$t\simeq40$, settling at $0.10$, $0.22$ and $0.51$ for amplitudes $0.3$, $0.5$
+and $0.8$.
+
+In the steady state the variance holds to within $1.3\%$ beyond $t=36$, and the
+intrinsic rank of the exact solution rises from $12$ to a peak of $56$ and
+settles at $41.9\pm0.6$ against a geometric bound of $256$. The evolution error
+is monotone in $\chi$ for every head size, and the budget saving over the
+standard encoding is $1.4$ at $L_2=10^{-2}$, achieved at $N=6$
+(Table~\ref{tab:forced}).
+
+\begin{table}[h]
+\centering
+\small
+\TabForced
+\caption{Forced cellular flow, $256^2$, $f=0.8\sin 4y$, averaged over the final
+third of the run.}
+\label{tab:forced}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{figures/forced_steady.png}
+\caption{Variance plateau, intrinsic rank in the steady state, and
+rate--distortion for the forced cellular flow.}
+\label{fig:forced}
+\end{figure}
+
+\section{A frozen DNS velocity}
+
+The cellular flow is integrable and its scalar spectrum steep, so the benchmark
+was repeated with a velocity taken from the DNS dataset. The streamfunction was
+recovered from the stored $v_x,v_y$ at $4096^2$ by inverting the vorticity
+spectrally, coarsened to $512^2$, and differentiated with the solver's own MPOs,
+leaving the velocity divergence-free to $2\times10^{-12}$ discretely.
+
+The streamfunction itself is close to full rank. At $\epsilon=10^{-6}$ its bond
+saturates the geometric bound and the tensor train costs more parameters than
+the dense field, $\rho=1.33$ at $L=9$ and $2.32$ at $L=10$. It becomes
+compressible only at $\epsilon=10^{-2}$, giving bond $21$ at $\rho=0.084$ for a
+$1.7\%$ error in $\psi$. The runs therefore use a truncated velocity, carrying
+bond $34$ against $4$ for the cellular flow, which makes a step about five times
+more expensive. With $\kappa=1.5\times10^{-2}$ the Batchelor scale is about three
+cells for the measured strain rate of $11$, and $T=2$ covers some $22$ eddy
+turnover times.
+
+The rank plateaus here as well, and faster: it is reached within a tenth of a
+time unit and then holds at $315\pm1.1$ at $\epsilon=10^{-6}$ ($61\%$ of the
+geometric bound), $154$ at $10^{-4}$ and $34$ at $10^{-2}$.
+
+The evolution error, however, ceases to be monotone in the bond cap. At $N=10$
+the $L_2$ error runs $7.7\times10^{-2}$, $1.5\times10^{-1}$,
+$2.9\times10^{-2}$, $1.9\times10^{-3}$ for $\chi=16,24,32,48$, and the variance
+error is non-monotone at $N=8$, $10$ and $12$. The representation error at the
+same budgets is monotone in every case (Table~\ref{tab:dns}), which locates the
+effect in the dynamics rather than in the encoding. The ratio of evolution to
+representation error widens from $1.5$--$25$ for the cellular flow to
+$1.5$--$233$ here.
+
+Two consequences follow. The rate--distortion framing used above does not
+transfer directly, since a given $(N,\chi)$ cannot be ranked by its budget
+alone; and the budget saving can be quoted at only one accuracy target where the
+two encodings overlap, $2.1$ at $L_2=10^{-1}$, achieved at $N=8$.
+
+\begin{table}[h]
+\centering
+\small
+\TabDNS
+\caption{Frozen DNS velocity, $512^2$, $\psi$ truncated at $10^{-2}$, averaged
+over the final third of the run.}
+\label{tab:dns}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{figures/dns_advection.png}
+\caption{Scalar advected by a frozen DNS velocity snapshot: rate--distortion,
+representation error at the same budgets, intrinsic rank, variance spectrum,
+variance budget and error histories.}
+\label{fig:dns}
+\end{figure}
+
 \section{Scope of these results}
 
 The measurements above are specific to the flow used. The cellular flow
@@ -234,10 +329,21 @@ difference is attributable to spatial coherence rather than to spectral slope or
 to alignment with the dyadic block boundaries: rigid shifts of the field by $2$,
 $4$, $8$ and $13$ cells leave the advantage unchanged.
 
-Real turbulent scalar fields lie between the two cases. The representation
-measurements on DNS data reported in the paper remain the reference point for
-what to expect there; the contribution of the present benchmark is that the
-advantage measured for representation is preserved under evolution.
+Real turbulent scalar fields lie between the two cases. The DNS-velocity run
+above gives the first direct measurement on a realistic field: the advantage
+persists, at $2.1$ in budget at $L_2=10^{-1}$, but the non-monotonicity of the
+evolution error means a single number characterises it less completely than in
+the cellular case. The representation measurements on DNS data reported in the
+paper remain the reference point for the representation question.
+
+One further check bears on those figures. \code{tt.svd} defaults to
+\code{renormalize=True}, which rescales the kept singular values at every split.
+On \code{theta.00059} at $4096^2$ the stored hybrid fields were found to equal
+the plain rank-truncated field times a single global scalar $c$ to
+$1.2$--$3.5\times10^{-14}$. The norm is preserved exactly, $E(1)$ shifts by
+exactly $c^2$ --- $+2.7\%$ at $\rho=0.014$, falling to $+0.04\%$ at $\rho=0.64$
+--- and the gradient flatness ratio is $1.0000$, so all scale-invariant
+statistics are unaffected.
 
 \section{Configuration}
 

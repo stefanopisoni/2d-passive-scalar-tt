@@ -26,9 +26,9 @@ plt.rcParams.update({"font.size": 9, "axes.grid": True, "grid.alpha": 0.3,
                      "legend.frameon": False})
 
 
-def collect():
+def collect(pattern=r"decay_(?:cmp|L\d+)_N(\d+)_bd(\d+)\.npz$"):
     rows = []
-    pat = re.compile(r"decay_(?:cmp|L\d+)_N(\d+)_bd(\d+)\.npz$")
+    pat = re.compile(pattern)
     for fn in sorted(glob.glob(os.path.join(RESULTS, "decay_*.npz"))):
         m = pat.search(os.path.basename(fn))
         if not m:
@@ -196,8 +196,31 @@ def latex_tables(rows):
     return os.path.join(_HERE, "tables_vs_standard.tex")
 
 
+def extra_tables(rows_dns, rows_frc):
+    """Tables for the two run families that use a different flow."""
+    def block(rows, caption_cols):
+        out = [r"\begin{tabular}{rrrrrr}", r"\toprule",
+               r"$N$ & $\chi$ & $\rho$ & head\,\% & $L_2$ (evolution) & "
+               r"$L_2$ (representation)\\", r"\midrule"]
+        for r in sorted(rows, key=lambda x: (x["N"], x["bd"])):
+            hf = "--" if r["N"] == 0 else f"{100*r['head_frac']:.0f}"
+            out.append(rf"{r['N']} & {r['bd']} & {r['rho']:.4f} & {hf} & "
+                       rf"${r['err']:.2e} & ${r['rep']:.2e}\\".replace(
+                           "e-0", r"\times10^{-").replace("e+0", r"\times10^{+"))
+        out += [r"\bottomrule", r"\end{tabular}"]
+        txt = "\n".join(out)
+        return re.sub(r"\$(\d\.\d\d)\\times10\^\{-(\d+)", r"$\1\\times10^{-\2}$", txt)
+
+    with open(os.path.join(_HERE, "tables_vs_standard.tex"), "a") as f:
+        f.write("\n\\newcommand{\\TabDNS}{%\n" + block(rows_dns, None) + "}\n")
+        f.write("\n\\newcommand{\\TabForced}{%\n" + block(rows_frc, None) + "}\n")
+
+
 if __name__ == "__main__":
     rows = collect()
     print(fig_head_budget(rows))
     print(latex_tables(rows))
-    print(f"{len(rows)} runs tabulated")
+    dns = collect(r"decay_DNS9_N(\d+)_bd(\d+)\.npz$")
+    frc = collect(r"decay_FRC8_N(\d+)_bd(\d+)\.npz$")
+    extra_tables(dns, frc)
+    print(f"{len(rows)} cellular, {len(dns)} DNS, {len(frc)} forced runs tabulated")
