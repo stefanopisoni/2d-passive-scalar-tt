@@ -121,12 +121,41 @@ The benchmark problem is a decaying passive scalar on a periodic square,
   \qquad \nabla\cdot\mathbf{u}=0,
   \label{eq:scalar}
 \end{equation}
-with no forcing, so that the variance budget is
+with no forcing. Multiplying Eq.~\eqref{eq:scalar} by $\theta$ gives a pointwise
+statement about $\theta^2/2$,
+\begin{equation}
+  \partial_t\frac{\theta^2}{2} + \mathbf{u}\!\cdot\!\nabla\frac{\theta^2}{2}
+  = \kappa\,\theta\nabla^2\theta ,
+\end{equation}
+and two rewritings turn it into a local conservation law. Incompressibility
+makes the transport term a pure divergence, since
+$\mathbf{u}\!\cdot\!\nabla(\theta^2/2)$ and
+$\nabla\!\cdot\!(\mathbf{u}\,\theta^2/2)$ differ by
+$(\theta^2/2)\,\nabla\!\cdot\!\mathbf{u}=0$; and the product rule splits the
+diffusive term as
+$\kappa\theta\nabla^2\theta=\kappa\nabla\!\cdot\!(\theta\nabla\theta)-\kappa|\nabla\theta|^2$.
+Hence
+\begin{equation}
+  \partial_t\frac{\theta^2}{2}
+  + \nabla\!\cdot\!\Big(\mathbf{u}\frac{\theta^2}{2}-\kappa\theta\nabla\theta\Big)
+  = -\,\kappa|\nabla\theta|^2 ,
+  \label{eq:budget-flux}
+\end{equation}
+and averaging over the periodic box annihilates the divergence, leaving
 \begin{equation}
   \frac{d}{dt}\frac{\langle\theta^2\rangle}{2}
   = -\kappa\langle|\nabla\theta|^2\rangle .
   \label{eq:budget}
 \end{equation}
+Advection therefore enters only inside a divergence: it redistributes variance
+in space and across scales without creating or destroying any, and the whole
+loss is the sign-definite diffusive term, whose size is set by the gradient the
+cascade has built. With a source the right-hand side gains
+$\langle\theta f\rangle$, and the forced runs equilibrate where the two balance.
+Eq.~\eqref{eq:budget} holds discretely only to the extent that the discrete
+transport operator keeps the skew-symmetry that made the term a divergence,
+which is why any variance unaccounted for by
+$\kappa\langle|\nabla\theta|^2\rangle$ in Fig.~\ref{fig:histphys} is numerical.
 The velocity is the steady cellular flow
 $\mathbf{u}=(\sin x\cos y,\,-\cos x\sin y)$, obtained from the streamfunction
 $\psi=\sin x\,\sin y$. It is constructed by applying the solver's own derivative MPOs to the encoded $\psi$,
@@ -136,6 +165,21 @@ resolution and head size, at a cost $\rho(\mathbf{u})$ from
 $1.9\times10^{-2}$ at $L=8$ down to $1.1\times10^{-3}$ at $L=11$. The initial
 condition is a random-phase superposition of all modes with
 $|\mathbf{k}|\le 2$, normalised to zero mean and unit variance.
+
+A separable velocity such as $\mathbf{u}=(\sin y,\,\sin x)$ would be simpler and
+equally incompressible, but it cannot serve as a test. The advective and
+conservative forms differ by $\theta$ times the \emph{discrete} divergence
+$\mathsf{D}_xu_x+\mathsf{D}_yu_y$, and for any $\mathbf{u}=(h(y),\,g(x))$ each
+of those terms vanishes separately: $\mathsf{D}_x$ applies an $x$-stencil to a
+field with no $x$-dependence and returns exactly zero. The two forms then reduce
+to the same expression, measured as
+$\|{\rm adv}-{\rm cons}\|_\infty/\|{\rm adv}\|_\infty=6.0\times10^{-15}$. In the
+cellular flow the same two terms are each $O(1)$, reaching $1.000$ in magnitude,
+and cancel only in sum to $1.9\times10^{-14}$; the transport forms then differ
+by $6.7\times10^{-4}$, an $O(\Delta x^2)$ difference that the skew form
+averages. Only the second kind of velocity can verify that the conservative form
+is implemented correctly or that the skew form conserves
+$\langle\theta^2\rangle$ better than the advective one.
 
 Space is discretised with second-order centred stencils for both the transport
 and the diffusion terms, and the transport term is written in skew form,
@@ -163,6 +207,48 @@ case $N=0$ of the hybrid encoder, verified to reproduce
 \code{tt.vector\_to\_mps(vec,2,2L)} bond for bond. Compression policy,
 contraction order, stencils, velocity, time step and dense reference are shared,
 so the head size is the only variable between the two.
+
+\section{Time histories}
+
+Figures~\ref{fig:histphys} and~\ref{fig:histcomp} collect the quantities
+recorded at every sample of every run. The first is the physics, taken from the
+dense reference and shown for all three flows so that a statement made for one
+can be checked against the others. The second is the encoding, drawn at one
+resolution and head size with the bond cap swept, since that is the only
+control.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/history_physical.png}
+\caption{Physical histories, from the dense reference. (a) Variance: monotone
+decay without forcing, a plateau with it. (b) The budget of
+Eq.~\eqref{eq:budget} formed numerically; the unforced flows close it to within
+the line width, and the forced case approaches closure as the steady state is
+reached, evaluated at the stored snapshots since the production
+$\langle\theta f\rangle$ is not a recorded diagnostic. (c) Centroid $\bar k$ and
+the $95\%$ wavenumber $k_{95}$ move to small scale and stall, which is the
+cascade reaching $\ell_B$. (d) Gradient flatness rises well above the Gaussian
+value $3$ as filaments form. (e) The variance spectrum filling in. (f) Scalar
+dissipation, peaking as the cascade arrives at $\ell_B$.}
+\label{fig:histphys}
+\end{figure*}
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/history_compression.png}
+\caption{Compression histories at $L=10$, $N=10$, bond cap swept. (a) The error
+rises while scales are being generated and then saturates rather than drifting.
+(b) The same curves against the error of merely representing the exact field at
+that budget, a bounded factor below. (c) Rank: the intrinsic rank of the exact
+solution at three probe accuracies (solid) plateaus far below the geometric
+bound, while the rank carried by the solver (dotted) sits at its cap throughout,
+$\epsilon$ being off. (d) Stored parameters, carried against needed. (e) The
+variance error, two to four orders of magnitude below the pointwise error at the
+same budget. (f) Mass drift: truncation is not mass-conserving and no projection
+is applied, so $|\langle\theta\rangle|$ grows by an amount set by the budget,
+against $10^{-15}$ for the dense reference.}
+\label{fig:histcomp}
+\end{figure*}
 
 \section{Head size: what $N$ controls}
 

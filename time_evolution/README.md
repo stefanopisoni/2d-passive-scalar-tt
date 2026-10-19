@@ -25,6 +25,10 @@ run_decaying_cellular.py   Experiment: decaying scalar in a cellular flow, dense
                            ground truth plus hybrid runs at several rank caps
 plot_decaying_cellular.py  Figures from those runs
 plot_hybrid_vs_standard.py Hybrid vs standard TT under evolution, at matched cost
+plot_histories.py          Time histories used in both documents: the physics
+                           (variance, budget closure, k-content, flatness,
+                           spectra, dissipation) and the compression (error,
+                           rank, cost, variance error, mass drift)
 sweep_head_size.py         Best head size N, and how its advantage scales with L
 sweep_resolution.py        Budget needed for a fixed accuracy, L=7..10
 plot_scaleup.py            Hybrid vs standard under evolution at L=8 and L=9
@@ -63,6 +67,7 @@ python run_decaying_cellular.py --bd 32 --label bd32 &
 python run_decaying_cellular.py --bd 16 --label bd16 &
 wait
 python plot_decaying_cellular.py
+python plot_histories.py
 ```
 
 The hybrid-versus-standard comparison sweeps head size against bond cap. `N=0`

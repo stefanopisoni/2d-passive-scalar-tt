@@ -58,12 +58,53 @@ budget follows from Eq.~\eqref{eq:ps},
 \;=\; -\,\kappa\big\langle|\nabla\theta|^2\big\rangle \;+\; \langle\theta f\rangle ,
 \label{eq:budget}
 \end{equation}
-because the advective term is skew-symmetric for $\nabla\!\cdot\!\mathbf{u}=0$
-and therefore conserves $\langle\theta^2\rangle$ exactly. Note the consequence,
-which matters for scheme design: the \emph{nonlinear} (bilinear) transport term
-is the conservative one, and the \emph{linear} diffusive term is what dissipates.
-The same structure holds for Navier--Stokes, where $\mathbf{u}\!\cdot\!\nabla\mathbf{u}$
-conserves kinetic energy and viscosity dissipates it.
+obtained as follows. Multiplying Eq.~\eqref{eq:ps} by $\theta$ and using
+$\theta\,\partial_t\theta=\partial_t(\theta^2/2)$ and
+$\theta\,\mathbf{u}\!\cdot\!\nabla\theta=\mathbf{u}\!\cdot\!\nabla(\theta^2/2)$,
+\begin{equation}
+\partial_t\frac{\theta^2}{2}
+ + \mathbf{u}\!\cdot\!\nabla\frac{\theta^2}{2}
+ \;=\; \kappa\,\theta\nabla^2\theta + \theta f .
+\label{eq:budget-pointwise}
+\end{equation}
+Two rewritings turn this into a statement about the box average. First,
+incompressibility converts the transport term into a pure divergence,
+$\mathbf{u}\!\cdot\!\nabla(\theta^2/2)=\nabla\!\cdot\!(\mathbf{u}\,\theta^2/2)$,
+since the two differ by $(\theta^2/2)\nabla\!\cdot\!\mathbf{u}=0$. Second, the
+diffusive term splits by the product rule,
+$\kappa\,\theta\nabla^2\theta=\kappa\nabla\!\cdot\!(\theta\nabla\theta)
+-\kappa|\nabla\theta|^2$. Collecting,
+\begin{equation}
+\partial_t\frac{\theta^2}{2}
+ + \nabla\!\cdot\!\Big(\mathbf{u}\frac{\theta^2}{2}-\kappa\theta\nabla\theta\Big)
+ \;=\; -\,\kappa|\nabla\theta|^2 + \theta f ,
+\label{eq:budget-flux}
+\end{equation}
+which is a local conservation law for $\theta^2/2$ with flux
+$\mathbf{u}\theta^2/2-\kappa\theta\nabla\theta$. Averaging over the periodic box
+annihilates every divergence and leaves Eq.~\eqref{eq:budget}.
+
+Three features of that result are used throughout. Advection appears only inside
+a divergence, so it \emph{redistributes} variance in space and across scales
+without creating or destroying any --- the cascade is driven by a term that is
+itself conservative. Diffusion contributes $-\kappa\langle|\nabla\theta|^2\rangle$,
+which is sign-definite, so the unforced variance is monotonically decreasing and
+the decay rate is set by how much gradient the cascade has produced rather than
+by $\kappa$ alone. And the only way to balance that loss is the production
+$\langle\theta f\rangle$, which is what the forced runs equilibrate.
+
+Note the consequence for scheme design: the \emph{nonlinear} (bilinear)
+transport term is the conservative one, and the \emph{linear} diffusive term is
+what dissipates. The same structure holds for Navier--Stokes, where
+$\mathbf{u}\!\cdot\!\nabla\mathbf{u}$ conserves kinetic energy and viscosity
+dissipates it.
+
+Discretely, Eq.~\eqref{eq:budget} holds only to the extent that the discrete
+transport operator inherits the skew-symmetry that made the term a divergence.
+This is the reason the solver uses the skew form, and the reason the variance
+histories in Fig.~\ref{fig:histphys} are evidence rather than bookkeeping: any
+variance not accounted for by $\kappa\langle|\nabla\theta|^2\rangle$ is numerical,
+and in the hybrid runs it is attributable to truncation.
 
 When $\nabla\!\cdot\!\mathbf{u}=0$ the transport term also admits the
 \emph{conservative} (flux) form
@@ -88,9 +129,34 @@ A genuine, space-dependent velocity has since been added: the steady cellular
 flow obtained from the streamfunction $\psi = \sin x \sin y$, i.e.
 $\mathbf{u} = (\sin x\cos y,\ -\cos x \sin y)$, run both decaying and weakly
 forced. The simpler choice $\mathbf{u} = (\sin y,\ \sin x)$ was tried first and
-discarded: it is incompressible but degenerate, in that the advective and
-conservative discretisations coincide identically, so it cannot distinguish the
-transport forms at all.
+discarded. It is a perfectly good flow physically --- its streamfunction is
+$\psi=\cos x-\cos y$ and its streamlines are closed --- but it is degenerate as
+a \emph{test}, for the following reason.
+
+Analytically the advective and conservative forms differ by
+$\theta\,\nabla\!\cdot\!\mathbf{u}$, so Eq.~\eqref{eq:cons} holds for any
+incompressible $\mathbf{u}$. After discretisation the difference is $\theta$
+times the \emph{discrete} divergence $\mathsf{D}_x u_x+\mathsf{D}_y u_y$, which
+in general does not vanish even when the continuum one does, and the two forms
+are genuinely different operators. For any velocity of the separated form
+$\mathbf{u}=(h(y),\,g(x))$ --- of which $(\sin y,\sin x)$ is the simplest
+example --- each term of that discrete divergence vanishes \emph{separately}:
+$\mathsf{D}_x u_x$ applies an $x$-stencil to a field with no $x$-dependence and
+returns exactly zero at every point, and likewise for $\mathsf{D}_y u_y$. The
+advective, conservative and skew discretisations are then literally the same
+expression. Measured at $256^2$ on the initial condition,
+$\|{\rm adv}-{\rm cons}\|_\infty/\|{\rm adv}\|_\infty = 6.0\times10^{-15}$,
+i.e.\ round-off.
+
+The cellular flow is incompressible in the weaker and more useful way. There
+$\mathsf{D}_x u_x$ and $\mathsf{D}_y u_y$ are each $O(1)$ --- both reach $1.000$
+in magnitude --- and cancel only in their sum, to $1.9\times10^{-14}$. The two
+transport forms then differ by $6.7\times10^{-4}$ in relative $\infty$-norm, an
+$O(\Delta x^2)$ discretisation difference that the skew form averages. Only with
+such a velocity can a run check that the conservative form is implemented
+correctly, measure whether the skew form conserves $\langle\theta^2\rangle$
+better than the advective one, or detect a solver that silently applies the
+wrong form.
 
 A frozen DNS velocity snapshot has since been added as a third case. The
 streamfunction is recovered from the stored $v_x,v_y$ at $4096^2$ by inverting
@@ -249,6 +315,49 @@ error saturates around $\sqrt{\epsilon}$; \code{tt.svd} renormalises singular
 values after truncation by default; \code{shift\_mpo} has inverted flags and is
 non-periodic; \code{MPO.\_\_matmul\_\_} and \code{MPO.contract()} cannot handle
 hybrid shapes at all.
+
+\section{Histories}
+
+Figures~\ref{fig:histphys} and~\ref{fig:histcomp} show the quantities that are
+tracked at every sample of every run: the first what the flow does to the
+scalar, the second what the encoding does to it over the same window. All three
+flows appear in the first so that a statement made for one can be checked
+against the others; the second is drawn at one resolution and head size
+($L=10$, $N=10$) with the bond cap swept, since that is the only control.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/history_physical.png}
+\caption{Physical histories, all from the dense reference. (a) Variance:
+monotone decay without forcing, and a plateau with it. (b) The budget of
+Eq.~\eqref{eq:budget}, formed numerically: the unforced flows close it to within
+the line width at every sample, and the forced case approaches closure as the
+steady state is reached (it is evaluated only at the stored snapshots, since the
+production $\langle\theta f\rangle$ is not a recorded diagnostic). (c) Where the
+variance sits: centroid $\bar k$ and the $95\%$ wavenumber $k_{95}$ both move to
+small scale and then stall, which is the cascade reaching $\ell_B$. (d) Gradient
+flatness rises well above the Gaussian value of $3$ as filaments form. (e) The
+variance spectrum filling in over time. (f) Scalar dissipation, peaking when the
+cascade arrives at $\ell_B$.}
+\label{fig:histphys}
+\end{figure*}
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/history_compression.png}
+\caption{Compression histories at $L=10$, $N=10$, bond cap swept. (a) The error
+rises while the cascade is generating scales and then saturates; it does not
+drift. (b) The same curves against the error of merely representing the exact
+field at that budget, which they track a bounded factor above. (c) Rank: the
+intrinsic rank of the exact solution at three probe accuracies (solid) plateaus
+far below the geometric bound, while the rank the solver carries (dotted) sits
+at its cap throughout, $\epsilon$ being off. (d) Stored parameters, carried
+versus needed. (e) The variance error, two to four orders of magnitude below the
+pointwise error at the same budget. (f) Mass drift: truncation is not
+mass-conserving and no projection is applied, so $|\langle\theta\rangle|$ grows
+by an amount set by the budget, against $10^{-15}$ for the dense reference.}
+\label{fig:histcomp}
+\end{figure*}
 
 \section{Findings and remarks}
 
