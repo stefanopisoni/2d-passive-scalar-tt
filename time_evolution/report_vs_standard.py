@@ -216,6 +216,116 @@ def extra_tables(rows_dns, rows_frc):
         f.write("\n\\newcommand{\\TabForced}{%\n" + block(rows_frc, None) + "}\n")
 
 
+# --------------------------------------------------------------------------
+# conventions tables
+# --------------------------------------------------------------------------
+# gamma = rms strain rate, (2 <S_ij S_ij>)^{1/2}.  In an incompressible 2-D
+# field this coincides with <|grad u|^2>^{1/2} and with the rms vorticity; all
+# three were measured and agree to 4 digits.  The cellular flow gives 1 exactly
+# (measured 0.9999); the truncated DNS velocity at L=9 measures 14.601.
+GAMMA = {"cellular": 1.0, "dns": 14.601}
+
+# chi of the velocity, after the derivative MPO and its own truncation
+CHI_U = {"cellular": 4, "dns": 34}
+
+# eps used to encode the streamfunction
+EPS_PSI = {"cellular": "$10^{-13}$", "dns": "$10^{-2}$"}
+
+
+def tab_symbols():
+    """Which object each of chi, eps, rho refers to, and which one is swept."""
+    rows = [
+        (r"$\chi$", r"largest bond dimension",
+         r"\textbf{the swept control} (\code{bd\_first}~$=$~\code{bd\_remaining});"
+         r" binding in every production run, i.e.\ measured $\chi=\chi_{\rm cap}$",
+         r"fixed per object, never swept: $4$ (cellular $\mathbf{u}$),"
+         r" $34$ (DNS $\mathbf{u}$), $2$ ($f$)"),
+        (r"$\epsilon$", r"relative SVD discard threshold",
+         r"\textbf{off} ($\epsilon=$\code{None}) in all $101$ production runs;"
+         r" recorded as $-1$ in the run files",
+         r"fixed: $10^{-13}$ ($\psi$ cellular, $f$), $10^{-2}$ ($\psi$ DNS),"
+         r" $10^{-10}$ after the derivative MPO"),
+        (r"$\rho$", r"stored parameters divided by $4^L$",
+         r"\textbf{an output}, determined by $(N,\chi)$ --- not an input",
+         r"output; $\rho(\mathbf{u})=1.1\times10^{-3}$ to $1.9\times10^{-2}$"
+         r" (cellular), $0.14$ (DNS)"),
+    ]
+    out = [r"\begin{tabular}{llp{0.30\linewidth}p{0.30\linewidth}}", r"\toprule",
+           r"& & applied to $\theta$ (the state) & applied to $\mathbf{u},\psi,f$"
+           r" (the coefficients)\\", r"\midrule"]
+    for s, d, a, b in rows:
+        out.append(rf"{s} & {d} & \raggedright {a} & \raggedright {b}"
+                   r"\tabularnewline[2pt]")
+    out += [r"\bottomrule", r"\end{tabular}"]
+    return "\n".join(out)
+
+
+def run_families():
+    """One record per run family, read off the result files themselves."""
+    fams = {}
+    for fn in sorted(glob.glob(os.path.join(RESULTS, "decay_*.npz"))):
+        d = np.load(fn, allow_pickle=True)
+        if bool(d["dense_only"]) or str(d["label"]) == "dnssmoke":
+            continue
+        vel = str(d["velocity"]) if "velocity" in d.files else "cellular"
+        amp = float(d["forcing_amp"]) if "forcing_amp" in d.files else 0.0
+        kind = "dns" if vel == "dns" else ("forced" if amp else "decaying")
+        key = (kind, int(d["L"]), float(d["T"]))
+        f = fams.setdefault(key, dict(
+            kind=kind, flow=vel, L=int(d["L"]), T=float(d["T"]),
+            kappa=float(d["kappa"]), dt=float(d["dt"]),
+            steps=int(d["n_steps"]), amp=amp,
+            kf=int(d["forcing_k"]) if "forcing_k" in d.files else 0,
+            Ns=set(), chis=set(), eps=set(), rho=[], n=0))
+        f["Ns"].add(int(d["N"]))
+        f["chis"].add(int(d["bd"]))
+        f["eps"].add(float(d["eps"]))
+        f["rho"].append(float(d["tt_params"][-1]) / 4.0 ** int(d["L"]))
+        f["n"] += 1
+    return [fams[k] for k in sorted(fams, key=lambda k: (k[0], k[1], k[2]))]
+
+
+def tab_runs(fams):
+    """Master run table: every knob of every family, in one place."""
+    def setstr(s):
+        return ",\\,".join(str(x) for x in sorted(s))
+
+    def sci(x):
+        m, e = f"{x:.4e}".split("e")
+        return rf"${m.rstrip('0').rstrip('.')}\times10^{{{int(e)}}}$"
+
+    label = {"decaying": "cellular, decaying", "forced": "cellular, forced",
+             "dns": "frozen DNS"}
+    out = [r"\begin{tabular}{lrlrrrlllr}", r"\toprule",
+           r"flow & grid & $\kappa$ & $\ell_B/\Delta x$ & $T$ & steps &"
+           r" $N$ & $\chi(\theta)$ & $\rho(\theta)$ & $\chi(\mathbf{u})$\\",
+           r"\midrule"]
+    for f in fams:
+        g = GAMMA[f["flow"]]
+        lb = np.sqrt(f["kappa"] / g) / (2 * np.pi / 2 ** f["L"])
+        name = label[f["kind"]]
+        if f["kind"] == "forced":
+            name += rf" ($f={f['amp']:g}\sin {f['kf']}y$)"
+        eps_off = f["eps"] == {-1.0}
+        rho = rf"{min(f['rho']):.4f}--{max(f['rho']):.4f}"
+        if not eps_off:
+            rho += r"$^{\dagger}$"
+        out.append(
+            rf"{name} & ${2**f['L']}^2$ & {sci(f['kappa'])} & {lb:.2f} & "
+            rf"{f['T']:g} & {f['steps']} & {setstr(f['Ns'])} & "
+            rf"{setstr(f['chis'])} & {rho} & {CHI_U[f['flow']]}\\")
+    out += [r"\bottomrule", r"\end{tabular}"]
+    return "\n".join(out)
+
+
+def conventions_tables():
+    fams = run_families()
+    with open(os.path.join(_HERE, "tables_vs_standard.tex"), "a") as f:
+        f.write("\n\\newcommand{\\TabSymbols}{%\n" + tab_symbols() + "}\n")
+        f.write("\n\\newcommand{\\TabRuns}{%\n" + tab_runs(fams) + "}\n")
+    return sum(x["n"] for x in fams), len(fams)
+
+
 if __name__ == "__main__":
     rows = collect()
     print(fig_head_budget(rows))
@@ -223,4 +333,6 @@ if __name__ == "__main__":
     dns = collect(r"decay_DNS9_N(\d+)_bd(\d+)\.npz$")
     frc = collect(r"decay_FRC8_N(\d+)_bd(\d+)\.npz$")
     extra_tables(dns, frc)
+    n_runs, n_fams = conventions_tables()
     print(f"{len(rows)} cellular, {len(dns)} DNS, {len(frc)} forced runs tabulated")
+    print(f"conventions: {n_runs} production runs in {n_fams} families")

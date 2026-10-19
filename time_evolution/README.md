@@ -122,6 +122,15 @@ spanning `2^(N/2) x 2^(N/2)` coarse blocks. The seam period is `2^(L - N/2)`.
 reproduce `tt.vector_to_mps(vec, 2, 2L)` bond-for-bond (up to tensnet's
 renormalisation factor), which is the paper's standard MPS.
 
+`chi` = bond cap, `eps` = SVD discard threshold, `rho` = stored parameters over
+`4^L`. Each applies to the state `theta` *and* to the coefficient fields
+`u`, `psi`, `f`, which is easy to conflate. In every production run the swept
+control is `chi(theta)`; `eps(theta)` is off, so the cap alone truncates; and
+`rho` is an output of `(N, chi)`, never an input. The fixed `eps` values that do
+appear belong to other objects: `1e-13` encoding `psi` and `f`, `1e-2` for the
+DNS `psi`, `1e-10` after the derivative MPO. `report_vs_standard.pdf` Tables I
+and II give the full correspondence and every knob of every run family.
+
 Everything is built on top of `tensnet` through its public API. No `tensnet` source
 is modified, and no `tensnet` global state is read or written — several of its
 defaults silently corrupt results rather than raising, which the module docstrings

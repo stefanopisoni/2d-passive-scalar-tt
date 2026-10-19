@@ -194,3 +194,29 @@ $N$ & $\chi$ & $\rho$ & head\,\% & $L_2$ (evolution) & $L_2$ (representation)\\
 10 & 32 & 0.5521 & 91 & $5.14\times10^{-8}$ & $4.54\times10^{-8}$\\
 \bottomrule
 \end{tabular}}
+
+\newcommand{\TabSymbols}{%
+\begin{tabular}{llp{0.30\linewidth}p{0.30\linewidth}}
+\toprule
+& & applied to $\theta$ (the state) & applied to $\mathbf{u},\psi,f$ (the coefficients)\\
+\midrule
+$\chi$ & largest bond dimension & \raggedright \textbf{the swept control} (\code{bd\_first}~$=$~\code{bd\_remaining}); binding in every production run, i.e.\ measured $\chi=\chi_{\rm cap}$ & \raggedright fixed per object, never swept: $4$ (cellular $\mathbf{u}$), $34$ (DNS $\mathbf{u}$), $2$ ($f$)\tabularnewline[2pt]
+$\epsilon$ & relative SVD discard threshold & \raggedright \textbf{off} ($\epsilon=$\code{None}) in all $101$ production runs; recorded as $-1$ in the run files & \raggedright fixed: $10^{-13}$ ($\psi$ cellular, $f$), $10^{-2}$ ($\psi$ DNS), $10^{-10}$ after the derivative MPO\tabularnewline[2pt]
+$\rho$ & stored parameters divided by $4^L$ & \raggedright \textbf{an output}, determined by $(N,\chi)$ --- not an input & \raggedright output; $\rho(\mathbf{u})=1.1\times10^{-3}$ to $1.9\times10^{-2}$ (cellular), $0.14$ (DNS)\tabularnewline[2pt]
+\bottomrule
+\end{tabular}}
+
+\newcommand{\TabRuns}{%
+\begin{tabular}{lrlrrrlllr}
+\toprule
+flow & grid & $\kappa$ & $\ell_B/\Delta x$ & $T$ & steps & $N$ & $\chi(\theta)$ & $\rho(\theta)$ & $\chi(\mathbf{u})$\\
+\midrule
+cellular, decaying & $256^2$ & $5\times10^{-3}$ & 2.88 & 8 & 1630 & 0,\,4,\,6,\,8,\,10 & 4,\,6,\,8,\,12,\,16,\,24,\,32 & 0.0208--0.2708 & 4\\
+cellular, decaying & $256^2$ & $5\times10^{-3}$ & 2.88 & 16 & 3259 & 6 & 16,\,32,\,64,\,128 & 0.0677--0.6458$^{\dagger}$ & 4\\
+cellular, decaying & $512^2$ & $1.25\times10^{-3}$ & 2.88 & 8 & 3259 & 0,\,8,\,10 & 12,\,16,\,24,\,32 & 0.0131--0.1536 & 4\\
+cellular, decaying & $1024^2$ & $3.125\times10^{-4}$ & 2.88 & 8 & 6519 & 0,\,8,\,10,\,12 & 16,\,24,\,32,\,48,\,64 & 0.0065--0.2708 & 4\\
+cellular, decaying & $2048^2$ & $7.8125\times10^{-5}$ & 2.88 & 8 & 13038 & 0,\,10,\,12 & 24,\,32,\,48,\,64 & 0.0038--0.0716 & 4\\
+frozen DNS & $512^2$ & $1.5\times10^{-2}$ & 2.61 & 2 & 1992 & 0,\,8,\,10,\,12 & 16,\,24,\,32,\,48 & 0.0221--0.7669 & 34\\
+cellular, forced ($f=0.8\sin 4y$) & $256^2$ & $5\times10^{-3}$ & 2.88 & 60 & 12222 & 0,\,6,\,8,\,10 & 16,\,24,\,32 & 0.0677--0.5521 & 4\\
+\bottomrule
+\end{tabular}}
