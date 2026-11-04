@@ -289,6 +289,13 @@ if len(_gvis):
     ax_e.loglog(np.full_like(_ycol, _kc), _ycol, color=_g_col, linestyle='none',
                 marker=_g_mk, markersize=3.5, alpha=0.85)
 
+# Same TT hybrid - exact region in k-space: the uncompressed scales r >= hybrid_shade_left
+# correspond to the low wavenumbers k <= 2^L / r (integer k, 2^L grid points per side).
+hybrid_shade_k_right = 2**L / hybrid_shade_left
+_xlim_e = ax_e.get_xlim()
+ax_e.axvspan(_xlim_e[0], hybrid_shade_k_right, color=hybrid_color, alpha=0.08, zorder=0)
+ax_e.set_xlim(_xlim_e)
+
 # 2. Structure Function Order 4 Plot
 ax_sf = axes[1]
 for i, r in enumerate(r_pdf_marks):
