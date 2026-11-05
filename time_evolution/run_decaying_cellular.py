@@ -263,7 +263,8 @@ def run(L: int, N: int, kappa: float, T: float, cfl: float, diff_number: float,
         n_samples: int, n_snaps: int, label: str,
         dense_cache: str = None, build_dense_cache: bool = False,
         forcing_amp: float = 0.0, forcing_k: int = 1,
-        velocity: str = "cellular", psi_eps: float = 1e-2):
+        velocity: str = "cellular", psi_eps: float = 1e-2,
+        init: str = None):
     n, dx, _, _ = grid(L)
 
     # The dense reference must be driven by *exactly* the velocity the hybrid
@@ -287,7 +288,12 @@ def run(L: int, N: int, kappa: float, T: float, cfl: float, diff_number: float,
     cache = (load_dense_cache(dense_cache, L, kappa, n_steps, sample_idx)
              if dense_cache and not build_dense_cache else None)
 
-    f0 = initial_field(L)
+    # A forced run started from the dense fixed point (forced_steady.py solve)
+    # isolates the truncation error at steady state from the spin-up, which at
+    # 1024^2 relaxes on t ~ 830 and does not fit a 5-day job.
+    f0 = initial_field(L) if init is None else np.load(init)
+    if f0.shape != (n, n):
+        raise SystemExit(f"--init {init} has shape {f0.shape}, need {(n, n)}")
     dense = f0.copy()
     if forcing_amp:
         f_dense = forcing_field(L, forcing_amp, forcing_k)
@@ -380,6 +386,7 @@ def run(L: int, N: int, kappa: float, T: float, cfl: float, diff_number: float,
                dense_only=dense_only,
                forcing_amp=forcing_amp, forcing_k=forcing_k,
                velocity=velocity, psi_eps=psi_eps, umax=umax,
+               init="" if init is None else init,
                bond_bound=geometric_bond_bounds(L, N),
                n_cells=4 ** L, snaps=np.array(snaps), snap_t=np.array(snap_t),
                eps_probe=np.array(EPS_PROBE))
@@ -427,6 +434,8 @@ def main():
     p.add_argument("--velocity", choices=("cellular", "dns"), default="cellular")
     p.add_argument("--psi-eps", type=float, default=1e-2,
                    help="truncation of the DNS streamfunction")
+    p.add_argument("--init", default=None,
+                   help=".npy initial field (default: the low-k random field)")
     a = p.parse_args()
     label = a.label or ("dense" if a.dense else
                         f"bd{a.bd}" if a.eps is None else f"eps{a.eps:g}")
@@ -434,7 +443,7 @@ def main():
         a.scheme, a.form, a.samples, a.snaps, label,
         dense_cache=a.dense_cache, build_dense_cache=a.build_dense_cache,
         forcing_amp=a.forcing_amp, forcing_k=a.forcing_k,
-        velocity=a.velocity, psi_eps=a.psi_eps)
+        velocity=a.velocity, psi_eps=a.psi_eps, init=a.init)
 
 
 if __name__ == "__main__":
