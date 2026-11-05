@@ -25,6 +25,10 @@
 #                where <theta^2> is within 1% of the steady value.
 #
 # The array runs over N in {0, 8, 10, 12} x the given chi list.
+#
+# Measured cost per step on sim nodes at chi=32: 0.5-1.3 s at 512^2, 0.9-2.2 s
+# at 1024^2 (N=12 the dearest). A hold run is 163k steps, so 1024^2 N=12 chi=32
+# needs ~107 h and is submitted to long_sim; everything else fits 5 days.
 
 set -euo pipefail
 
