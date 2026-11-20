@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.5.7)  19 OCT 2026 12:48
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.5.7)  20 NOV 2026 12:28
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -385,12 +385,12 @@ Package: enumitem 2025/02/06 v3.11 Customized lists
 \enit@count@id=\count319
 \enitdp@description=\count320
 )
-(./tables_vs_standard.tex)
+(./tables_vs_standard.tex) (./tables_forced_hires.tex)
 Class revtex4-2 Info: Unrecognized LaTeX tabular. Please update this document c
-lass! (Proceeding with fingers crossed.) on input line 15.
-Class revtex4-2 Info: cite was not loaded (OK!) on input line 15.
-Class revtex4-2 Info: mcite was not loaded (OK!) on input line 15.
-Class revtex4-2 Info: multicol was not loaded (OK!) on input line 15.
+lass! (Proceeding with fingers crossed.) on input line 16.
+Class revtex4-2 Info: cite was not loaded (OK!) on input line 16.
+Class revtex4-2 Info: mcite was not loaded (OK!) on input line 16.
+Class revtex4-2 Info: multicol was not loaded (OK!) on input line 16.
 
 (/usr/local/texlive/2026/texmf-dist/tex/latex/l3backend/l3backend-pdftex.def
 File: l3backend-pdftex.def 2025-10-09 L3 backend support: PDF output (pdfTeX)
@@ -399,24 +399,24 @@ File: l3backend-pdftex.def 2025-10-09 L3 backend support: PDF output (pdfTeX)
 (./report_vs_standard.aux)
 \openout1 = `report_vs_standard.aux'.
 
-LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 15.
-LaTeX Font Info:    ... okay on input line 15.
-LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 15.
-LaTeX Font Info:    ... okay on input line 15.
-LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 15.
-LaTeX Font Info:    ... okay on input line 15.
-LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 15.
-LaTeX Font Info:    ... okay on input line 15.
-LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 15.
-LaTeX Font Info:    ... okay on input line 15.
-LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 15.
-LaTeX Font Info:    ... okay on input line 15.
-LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 15.
-LaTeX Font Info:    ... okay on input line 15.
-LaTeX Font Info:    Checking defaults for PD1/pdf/m/n on input line 15.
-LaTeX Font Info:    ... okay on input line 15.
-LaTeX Font Info:    Checking defaults for PU/pdf/m/n on input line 15.
-LaTeX Font Info:    ... okay on input line 15.
+LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 16.
+LaTeX Font Info:    ... okay on input line 16.
+LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 16.
+LaTeX Font Info:    ... okay on input line 16.
+LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 16.
+LaTeX Font Info:    ... okay on input line 16.
+LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 16.
+LaTeX Font Info:    ... okay on input line 16.
+LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 16.
+LaTeX Font Info:    ... okay on input line 16.
+LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 16.
+LaTeX Font Info:    ... okay on input line 16.
+LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 16.
+LaTeX Font Info:    ... okay on input line 16.
+LaTeX Font Info:    Checking defaults for PD1/pdf/m/n on input line 16.
+LaTeX Font Info:    ... okay on input line 16.
+LaTeX Font Info:    Checking defaults for PU/pdf/m/n on input line 16.
+LaTeX Font Info:    ... okay on input line 16.
 
 (/usr/local/texlive/2026/texmf-dist/tex/context/base/mkii/supp-pdf.mkii
 [Loading MPS to PDF converter (version 2006.09.02).]
@@ -440,22 +440,22 @@ Package epstopdf-base Info: Redefining graphics rule for `.eps' on input line 4
 File: epstopdf-sys.cfg 2010/07/13 v1.3 Configuration of (r)epstopdf for TeX Liv
 e
 ))
-Package hyperref Info: Link coloring OFF on input line 15.
+Package hyperref Info: Link coloring OFF on input line 16.
 
 (./report_vs_standard.out) (./report_vs_standard.out)
 \@outlinefile=\write4
 \openout4 = `report_vs_standard.out'.
 
-Class revtex4-2 Info: Taking \maketitle back from hyperref on input line 15.
+Class revtex4-2 Info: Taking \maketitle back from hyperref on input line 16.
 \openout3 = `report_vs_standardNotes.bib'.
 
-LaTeX Font Info:    Trying to load font information for U+msa on input line 28.
+LaTeX Font Info:    Trying to load font information for U+msa on input line 29.
 
 
 (/usr/local/texlive/2026/texmf-dist/tex/latex/amsfonts/umsa.fd
 File: umsa.fd 2013/01/14 v3.01 AMS symbols A
 )
-LaTeX Font Info:    Trying to load font information for U+msb on input line 28.
+LaTeX Font Info:    Trying to load font information for U+msb on input line 29.
 
 
 (/usr/local/texlive/2026/texmf-dist/tex/latex/amsfonts/umsb.fd
@@ -463,39 +463,39 @@ File: umsb.fd 2013/01/14 v3.01 AMS symbols B
 )
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `\\' on input line 43.
+(hyperref)                removing `\\' on input line 46.
 
 [1{/usr/local/texlive/2026/texmf-var/fonts/map/pdftex/updmap/pdftex.map}]
 [2]
-<figures/history_physical.png, id=110, 755.4624pt x 401.3394pt>
+<figures/history_physical.png, id=123, 755.4624pt x 401.3394pt>
 File: figures/history_physical.png Graphic file (type png)
 <use figures/history_physical.png>
-Package pdftex.def Info: figures/history_physical.png  used on input line 222.
+Package pdftex.def Info: figures/history_physical.png  used on input line 226.
 (pdftex.def)             Requested size: 510.0pt x 270.94139pt.
-<figures/history_compression.png, id=114, 761.244pt x 401.3394pt>
+<figures/history_compression.png, id=129, 761.244pt x 401.3394pt>
 File: figures/history_compression.png Graphic file (type png)
 <use figures/history_compression.png>
-Package pdftex.def Info: figures/history_compression.png  used on input line 23
-8.
+Package pdftex.def Info: figures/history_compression.png  used on input line 24
+3.
 (pdftex.def)             Requested size: 510.0pt x 268.88374pt.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 253.
+(hyperref)                removing `math shift' on input line 258.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 253.
+(hyperref)                removing `math shift' on input line 258.
 
 [3 <./figures/history_physical.png>] [4 <./figures/history_compression.png>]
-<figures/head_budget.png, id=130, 789.6702pt x 233.1912pt>
+<figures/head_budget.png, id=145, 789.6702pt x 233.1912pt>
 File: figures/head_budget.png Graphic file (type png)
 <use figures/head_budget.png>
-Package pdftex.def Info: figures/head_budget.png  used on input line 290.
+Package pdftex.def Info: figures/head_budget.png  used on input line 295.
 (pdftex.def)             Requested size: 510.0pt x 150.60463pt.
 
 
-LaTeX Warning: Float too large for page by 238.7138pt on input line 319.
+LaTeX Warning: Float too large for page by 238.7138pt on input line 324.
 
 
 LaTeX Warning: `h' float specifier changed to `ht'.
@@ -503,10 +503,10 @@ LaTeX Warning: `h' float specifier changed to `ht'.
 
 LaTeX Warning: `h' float specifier changed to `ht'.
 
-<figures/scaleup_comparison.png, id=134, 701.019pt x 473.88472pt>
+<figures/scaleup_comparison.png, id=149, 701.019pt x 473.88472pt>
 File: figures/scaleup_comparison.png Graphic file (type png)
 <use figures/scaleup_comparison.png>
-Package pdftex.def Info: figures/scaleup_comparison.png  used on input line 362
+Package pdftex.def Info: figures/scaleup_comparison.png  used on input line 367
 .
 (pdftex.def)             Requested size: 510.0pt x 344.76157pt.
 
@@ -518,47 +518,67 @@ LaTeX Warning: `h' float specifier changed to `ht'.
 
 [6 <./figures/scaleup_comparison.png>]
 
-LaTeX Warning: A float is stuck (cannot be placed) on input line 434.
+LaTeX Warning: A float is stuck (cannot be placed) on input line 430.
 
 [7]
-<figures/forced_steady.png, id=156, 667.293pt x 268.3626pt>
-File: figures/forced_steady.png Graphic file (type png)
-<use figures/forced_steady.png>
-Package pdftex.def Info: figures/forced_steady.png  used on input line 437.
-(pdftex.def)             Requested size: 510.0pt x 205.10425pt.
+<figures/forced_relaxation.png, id=175, 575.2692pt x 213.9192pt>
+File: figures/forced_relaxation.png Graphic file (type png)
+<use figures/forced_relaxation.png>
+Package pdftex.def Info: figures/forced_relaxation.png  used on input line 452.
+
+(pdftex.def)             Requested size: 510.0pt x 189.65305pt.
 
 
 LaTeX Warning: `h' float specifier changed to `ht'.
 
 [8]
-<figures/dns_advection.png, id=163, 677.4108pt x 447.1104pt>
+<figures/forced_steady.png, id=183, 667.293pt x 268.3626pt>
+File: figures/forced_steady.png Graphic file (type png)
+<use figures/forced_steady.png>
+Package pdftex.def Info: figures/forced_steady.png  used on input line 505.
+(pdftex.def)             Requested size: 510.0pt x 205.10425pt.
+
+
+LaTeX Warning: `h' float specifier changed to `ht'.
+
+[9 <./figures/forced_relaxation.png>]
+
+LaTeX Warning: `h' float specifier changed to `ht'.
+
+<figures/forced_hires.png, id=196, 736.6722pt x 430.7292pt>
+File: figures/forced_hires.png Graphic file (type png)
+<use figures/forced_hires.png>
+Package pdftex.def Info: figures/forced_hires.png  used on input line 582.
+(pdftex.def)             Requested size: 510.0pt x 298.19589pt.
+[10 <./figures/forced_steady.png>] [11 <./figures/forced_hires.png>]
+<figures/dns_advection.png, id=215, 677.4108pt x 447.1104pt>
 File: figures/dns_advection.png Graphic file (type png)
 <use figures/dns_advection.png>
-Package pdftex.def Info: figures/dns_advection.png  used on input line 493.
+Package pdftex.def Info: figures/dns_advection.png  used on input line 657.
 (pdftex.def)             Requested size: 510.0pt x 336.61456pt.
 
 
 LaTeX Warning: `h' float specifier changed to `ht'.
 
-[9 <./figures/forced_steady.png>] [10{/usr/local/texlive/2026/texmf-dist/fonts/
-enc/dvips/cm-super/cm-super-ts1.enc} <./figures/dns_advection.png>]
+[12]
 No file report_vs_standard.bbl.
-[11] (./report_vs_standard.aux)
+[13{/usr/local/texlive/2026/texmf-dist/fonts/enc/dvips/cm-super/cm-super-ts1.en
+c} <./figures/dns_advection.png>] (./report_vs_standard.aux)
  ***********
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-01-19>
  ***********
 Package rerunfilecheck Info: File `report_vs_standard.out' has not changed.
-(rerunfilecheck)             Checksum: CBDEF9B6934A9E1F124EC819B8A838A2;2732.
+(rerunfilecheck)             Checksum: 5EBB82E2CB40AD762224E74EDB8FA012;3608.
  ) 
 Here is how much of TeX's memory you used:
- 12581 strings out of 467525
- 187605 string characters out of 5418983
- 704421 words of memory out of 5000000
- 41297 multiletter control sequences out of 15000+600000
- 639398 words of font info for 84 fonts, out of 8000000 for 9000
+ 12631 strings out of 467525
+ 188595 string characters out of 5418983
+ 704257 words of memory out of 5000000
+ 41332 multiletter control sequences out of 15000+600000
+ 639698 words of font info for 85 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
- 75i,11n,79p,988b,575s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 75i,11n,79p,988b,520s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/local/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb
 ></usr/local/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx12.pfb>
 </usr/local/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx8.pfb></
@@ -584,10 +604,10 @@ nts/type1/public/amsfonts/cm/cmti10.pfb></usr/local/texlive/2026/texmf-dist/fon
 ts/type1/public/amsfonts/cm/cmti9.pfb></usr/local/texlive/2026/texmf-dist/fonts
 /type1/public/amsfonts/cm/cmtt9.pfb></usr/local/texlive/2026/texmf-dist/fonts/t
 ype1/public/cm-super/sfrm1000.pfb>
-Output written on report_vs_standard.pdf (11 pages, 1149556 bytes).
+Output written on report_vs_standard.pdf (13 pages, 1402992 bytes).
 PDF statistics:
- 301 PDF objects out of 1000 (max. 8388607)
- 222 compressed objects within 3 object streams
- 44 named destinations out of 1000 (max. 500000)
- 143 words of extra memory for PDF output out of 10000 (max. 10000000)
+ 351 PDF objects out of 1000 (max. 8388607)
+ 265 compressed objects within 3 object streams
+ 56 named destinations out of 1000 (max. 500000)
+ 177 words of extra memory for PDF output out of 10000 (max. 10000000)
 

@@ -29,6 +29,12 @@ plot_histories.py          Time histories used in both documents: the physics
                            (variance, budget closure, k-content, flatness,
                            spectra, dissipation) and the compression (error,
                            rank, cost, variance error, mass drift)
+forced_steady.py           Forced cellular flow: steady state by direct sparse
+                           solve, and dense relaxation probes towards it
+plot_forced_hires.py       Forced runs at 512^2/1024^2 held at the steady state:
+                           figures and tables_forced_hires.tex (run on the cluster)
+cluster/                   Slurm submit scripts (submit_forced_hires.slurm: hold,
+                           spin-up and T=600 extension families)
 sweep_head_size.py         Best head size N, and how its advantage scales with L
 sweep_resolution.py        Budget needed for a fixed accuracy, L=7..10
 plot_scaleup.py            Hybrid vs standard under evolution at L=8 and L=9

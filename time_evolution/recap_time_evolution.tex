@@ -329,10 +329,11 @@ against the others; the second is drawn at one resolution and head size
 \centering
 \includegraphics[width=\linewidth]{figures/history_physical.png}
 \caption{Physical histories, all from the dense reference. (a) Variance:
-monotone decay without forcing, and a plateau with it. (b) The budget of
+monotone decay without forcing; with it, a slow approach to the steady value
+$0.4804$, still $6\%$ away at $T=60$. (b) The budget of
 Eq.~\eqref{eq:budget}, formed numerically: the unforced flows close it to within
 the line width at every sample, and the forced case approaches closure as the
-steady state is reached (it is evaluated only at the stored snapshots, since the
+steady state is approached (it is evaluated only at the stored snapshots, since the
 production $\langle\theta f\rangle$ is not a recorded diagnostic). (c) Where the
 variance sits: centroid $\bar k$ and the $95\%$ wavenumber $k_{95}$ both move to
 small scale and then stall, which is the cascade reaching $\ell_B$. (d) Gradient
@@ -455,8 +456,9 @@ by an amount set by the budget, against $10^{-15}$ for the dense reference.}
       once the cascade steepens gradients the dissipation grows by orders of
       magnitude, so the field decays anyway. That the rank plateau holds while
       the variance falls by two orders is arguably a stronger statement, but the
-      statistically-steady state is the regime the paper's statistics describe
-      and it has not yet been reached.
+      statistically-steady state is the regime the paper's statistics describe.
+      It has since been reached by solving for it directly; see the forced
+      runs below.
 \item \textbf{Traps for the experimenter.} Rank experiments need a field
       whose rank has room to move: a multiscale field is full rank and the
       measurement merely saturates the chain geometry. A total error that falls
@@ -499,17 +501,58 @@ contractions and SVDs, none large enough to amortise thread dispatch. On a
 earlier observation that thread count stopped mattering after the move to LAPACK
 understates it: on many-core hardware extra threads are actively harmful.
 
-\paragraph{Forcing at the largest scale does not equilibrate.} The approach to a
-statistically steady state is set by the diffusive time of the forced scale,
-$1/(\kappa k_f^2)$, which is $200$ time units at $k_f=1$ and was still climbing
-at $t=90$ for every amplitude tried. At $k_f=4$ that time is $12$ and the
-variance plateaus by $t\simeq40$.
+\paragraph{The forced steady state is a fixed point, reached on a time
+$\propto1/\kappa$.} With $\mathbf{u}$ and $f$ steady the forced problem is
+linear, so its long-time state solves $\mathsf{A}\theta_{ss}=-f$ with
+$\mathsf{A}$ the solver's own discrete operator. Solved directly, it gives
+$\langle\theta^2\rangle_{ss}=0.4804$, $0.4956$ and $0.4975$ at $256^2$,
+$512^2$ and $1024^2$. The dense solver approaches it exponentially with
+e-folding time $\tau=54$, $207$ and $806$, i.e.\ $\kappa\tau\simeq0.26$ at every
+resolution (Fig.~\ref{fig:relax}). The earlier estimate $1/(\kappa k_f^2)=12.5$
+at $k_f=4$ was four times too short, so the $256^2$ forced runs, stopped at
+$T=60$, end $6.4\%$ above the steady variance: they sample a late transient, not
+the steady state. Their comparisons against the dense reference stand.
 
-\paragraph{The rank plateau survives both a steady state and a turbulent
-velocity.} In the forced cellular run at $256^2$ the variance plateaus by
-$t\simeq36$ (within $1.3\%$ thereafter) and the intrinsic rank rises from $12$
-to a peak of $56$ and settles at $41.9\pm0.6$ against a geometric bound of
-$256$. Advected by a frozen DNS velocity snapshot at $512^2$ the rank rises
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{figures/forced_relaxation.png}
+\caption{Dense approach to the forced steady state against $t$ and against
+$\kappa t$; the tails collapse in units of $1/\kappa$.}
+\label{fig:relax}
+\end{figure}
+
+\paragraph{The hybrid encoding holds the steady state at $512^2$ and $1024^2$;
+the standard one does not at low $\chi$.} A run to steady state at $1024^2$
+would need $\sim2\times10^6$ steps, $2$--$45$ days for a hybrid run, so each run
+instead starts from $\theta_{ss}$, beside a dense reference that then stays put
+to $10^{-14}$. Any departure is truncation fed back through the dynamics. With
+$N\ge8$ and $\chi\ge16$ the error levels off within about $20$ time units at
+$1.1$--$3.8$ times the representation error at $512^2$ and $2.6$--$7.7$ times
+at $1024^2$, and the steady variance is held to $2\times10^{-4}$ or better. The
+standard encoding ($N=0$) at $1024^2$ with $\chi\le16$ loses the state: $L_2$
+error $0.65$--$1.24$, variance off by $18$--$58\%$, and at $\chi=16$ an error
+still growing exponentially at $T=200$. At fixed accuracy the hybrid encoding
+needs $1.4$--$1.5$ times fewer parameters at $512^2$ and $2.5$--$2.8$ at
+$1024^2$, at $N=8$ (Fig.~\ref{fig:hires}). From the initial condition at $512^2$
+the transient is much harder to track, with evolution errors $45$--$1400$ times
+the representation error at $\chi\le16$ for most head sizes.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/forced_hires.png}
+\caption{Forced runs held at the steady state, $512^2$ (top) and $1024^2$
+(bottom). Left: $L_2$ error at $t=T$ against $\rho$, evolved (circles) and
+representation (squares). Centre: steady-variance error. Right: error histories
+at $\chi=16$, evolved (solid) and representation (dashed).}
+\label{fig:hires}
+\end{figure*}
+
+\paragraph{The rank plateau survives both a sustained forcing and a turbulent
+velocity.} In the forced cellular run at $256^2$ the intrinsic rank rises from
+$12$ to a peak of $56$ and holds at $41.9\pm0.6$ over $40\le t\le60$, against
+$38$ for the exact steady state and a geometric bound of $256$; the exact steady
+states at $512^2$ and $1024^2$ need $\chi=28$ and $33$ at $\epsilon=10^{-6}$
+($N=10$). Advected by a frozen DNS velocity snapshot at $512^2$ the rank rises
 within a tenth of a time unit and holds at $315\pm1.1$ at $\epsilon=10^{-6}$
 ($61\%$ of the bound), $154$ at $10^{-4}$ and $34$ at $10^{-2}$, flat for the
 remaining $22$ eddy turnover times.
@@ -589,7 +632,9 @@ profiled and improved by about an order of magnitude, and the whole campaign now
 runs as Slurm arrays. The hybrid encoding has been benchmarked against a
 standard tensor train at four resolutions (companion report
 \code{report\_vs\_standard.pdf}), and the deferred renormalisation check has
-been settled on the published data.
+been settled on the published data. The forced steady state has been solved
+for directly at three resolutions, and the hybrid encoding holds it at $512^2$
+and $1024^2$ where the standard encoding at low $\chi$ does not.
 
 \begin{enumerate}[leftmargin=*]
 \item \textbf{The DNS-velocity ladder}, at $512^2$ with a frozen velocity
@@ -600,9 +645,12 @@ been settled on the published data.
       what the factor of two becomes on a realistic field, and whether the rank
       still saturates when the straining is genuinely turbulent.
 
-\item \textbf{The forced steady state}, at $256^2$ with $f=0.8\sin 4y$.
-      \emph{Settles:} whether the rank plateau survives in a sustained cascade
-      rather than a decaying transient.
+\item \textbf{The forced steady state}, now done at $512^2$ and $1024^2$ from
+      the exact steady state. Four $1024^2$ runs whose error was still growing
+      at $T=200$ ($N=0$, $\chi=16,24$; $N=12$, $\chi=12,16$) are being extended
+      to $T=600$; they will fix whether the standard encoding at $\chi=24$ also
+      loses the state, and with it the budget saving at $1024^2$, now a lower
+      bound.
 
 \item \textbf{The production geometry} ($4096^2$), held rather than blocked.
       A step costs $7.3$~h at $\chi=24$ and the shared dense-reference cache is

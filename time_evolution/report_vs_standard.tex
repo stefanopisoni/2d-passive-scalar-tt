@@ -11,6 +11,7 @@
 \setlist[itemize]{itemsep=1pt, topsep=3pt, parsep=0pt}
 
 \input{tables_vs_standard}
+\input{tables_forced_hires}
 
 \begin{document}
 
@@ -34,8 +35,10 @@ $N\simeq L$, corresponding to a $2^{L/2}\times 2^{L/2}$ coarse grid represented
 densely and the finer scales carried by the tail. The error made in evolving
 tracks the error of merely representing the same field within a factor $1.5$--$25$
 for every encoding, resolution and budget measured. Two further flows are
-reported: a forced cellular flow, in which the rank plateau found in the
-decaying cascade persists in a statistically steady state, and a frozen DNS
+reported. A forced cellular flow, started at $512^2$ and $1024^2$ from its
+exact steady state, is held there by the hybrid encoding with an evolution error
+$1.1$--$7.7$ times the representation error for $\chi\ge16$, while the standard
+encoding at $1024^2$ loses it for $\chi\le16$. A frozen DNS
 velocity snapshot, under which the rank also plateaus but the evolution error
 ceases to be monotone in the bond cap while the representation error remains so.
 \end{abstract}
@@ -80,7 +83,7 @@ The \emph{intrinsic rank} reported in several places is a property of the exact
 solution, obtained by recompressing the dense field at a probe accuracy with no
 feedback into the dynamics. It is always quoted with that probe $\epsilon$ and
 with the head size $N$ it was measured in, since both change it: in the forced
-steady state the same field gives $58.9$, $41.7$ and $23.0$ at $N=0$, $8$ and
+run at $256^2$ the same late-time field gives $58.9$, $41.7$ and $23.0$ at $N=0$, $8$ and
 $10$ when probed at $\epsilon=10^{-6}$, and $41.7$, $20.0$ and $6.0$ at $N=8$
 when probed at $10^{-6}$, $10^{-4}$ and $10^{-2}$. A rank is also reported
 against the geometric bound $\min(2^{\rm cut},2^{2L-{\rm cut}})$ at the same
@@ -200,7 +203,8 @@ remaining at $T=8$ is not comparable across the ladder --- $0.50$, $0.88$ and
 $0.95$ of its initial value at $L=8$, $10$ and $11$ --- whereas the rank plateau
 is. The two other flows run to $T=60$ and $T=2$ for the reasons given in
 Secs.~\ref{sec:forced} and~\ref{sec:dns}; Table~\ref{tab:runs} lists all of
-them.
+them. The forced flow is repeated at $512^2$ and $1024^2$ starting from its
+exact steady state (Sec.~\ref{sec:forcedhires}).
 
 Both encodings are advanced by identical code. The standard tensor train is the
 case $N=0$ of the hybrid encoder, verified to reproduce
@@ -211,7 +215,7 @@ so the head size is the only variable between the two.
 \section{Time histories}
 
 Figures~\ref{fig:histphys} and~\ref{fig:histcomp} collect the quantities
-recorded at every sample of every run. The first is the physics, taken from the
+recorded at every sample of the $L\le10$ runs above. The first is the physics, taken from the
 dense reference and shown for all three flows so that a statement made for one
 can be checked against the others. The second is the encoding, drawn at one
 resolution and head size with the bond cap swept, since that is the only
@@ -221,10 +225,11 @@ control.
 \centering
 \includegraphics[width=\linewidth]{figures/history_physical.png}
 \caption{Physical histories, from the dense reference. (a) Variance: monotone
-decay without forcing, a plateau with it. (b) The budget of
+decay without forcing; with it, a slow approach to the steady value $0.4804$,
+which at $T=60$ is still $6\%$ away (Sec.~\ref{sec:forced}). (b) The budget of
 Eq.~\eqref{eq:budget} formed numerically; the unforced flows close it to within
 the line width, and the forced case approaches closure as the steady state is
-reached, evaluated at the stored snapshots since the production
+approached, evaluated at the stored snapshots since the production
 $\langle\theta f\rangle$ is not a recorded diagnostic. (c) Centroid $\bar k$ and
 the $95\%$ wavenumber $k_{95}$ move to small scale and stall, which is the
 cascade reaching $\ell_B$. (d) Gradient flatness rises well above the Gaussian
@@ -393,52 +398,211 @@ small contractions and SVDs, none large enough to amortise thread dispatch.
 \label{sec:forced}
 
 The results above are obtained in a decaying cascade. To check that they are not
-an artefact of the transient, the cellular flow was rerun at $256^2$ with a
-steady source $f=0.8\sin 4y$ to $T=60$.
+an artefact of the transient, the cellular flow was rerun with a steady source
+$f=0.8\sin 4y$: at $256^2$ from the usual initial condition to $T=60$, and at
+$512^2$ and $1024^2$ from the exact steady state
+(Sec.~\ref{sec:forcedhires}).
 
-The forced wavenumber matters. The approach to a statistically steady state is
-governed by the diffusive time of the forced scale, $1/(\kappa k_f^2)$, which is
-$200$ time units at $k_f=1$; amplitudes from $0.02$ to $0.05$ were all still
-climbing at $t=90$. At $k_f=4$ that time is $12$, and the variance plateaus by
-$t\simeq40$, settling at $0.10$, $0.22$ and $0.51$ for amplitudes $0.3$, $0.5$
-and $0.8$.
+\subsection{The steady state and the approach to it}
+
+With $\mathbf{u}$ and $f$ both independent of time, the forced problem is linear
+and autonomous, so its long-time state is a fixed point: the solution of
+$\mathsf{A}\theta_{ss}=-f$, where $\mathsf{A}$ is the solver's discrete operator
+(skew-form transport plus diffusion, second-order centred, periodic).
+$\mathsf{A}$ was assembled as a sparse matrix, which reproduces the
+time-stepper's right-hand side to $3\times10^{-16}$ on a random field, and
+solved directly. It annihilates constants, so one value is pinned and the mean
+removed afterwards; the mean is conserved by the dynamics and starts at zero.
+Applied to $\theta_{ss}$, the time-stepper's own right-hand side vanishes to
+$4\times10^{-11}$, $3\times10^{-10}$ and $6\times10^{-9}$ of $\|f\|_\infty$ at
+$256^2$, $512^2$ and $1024^2$. Table~\ref{tab:steady} gives the steady variance.
+
+The dense solver started from the usual initial condition approaches
+$\theta_{ss}$ exponentially once the initial transient has passed
+(Fig.~\ref{fig:relax}). The e-folding time $\tau$ of the variance gap scales as
+$1/\kappa$, with $\kappa\tau=0.270$, $0.258$ and $0.252$. Along the ladder
+$\kappa\propto\Delta x^2$, so $\tau$ grows fourfold per doubling of resolution,
+to $\tau=806$ at $1024^2$. There, after $2.4\times10^3$ time units
+($2\times10^6$ steps, $98$~h of dense integration), $\langle\theta^2\rangle$ is
+still $0.9\%$ above its steady value. A hybrid run of that length would take
+$2$ to $45$ days at the measured $0.1$--$2$~s per step, which is why the
+higher-resolution runs start from $\theta_{ss}$.
+
+The exact steady states are compressible. Recompressed at
+$\epsilon=10^{-6}$, they need $\chi=38$ at $256^2$ ($N=8$), $28$ at $512^2$ and
+$33$ at $1024^2$ (both $N=10$), and $18$, $11$ and $11$ at $\epsilon=10^{-4}$.
+The ladder $\chi\in\{8,\dots,32\}$ therefore runs from well below to about the
+rank of the exact state.
+
+\begin{table}[h]
+\centering
+\small
+\TabSteady
+\caption{Steady state of the forced cellular flow, $f=0.8\sin4y$, with
+$\kappa\propto\Delta x^2$. $\langle\theta^2\rangle_{ss}$ from the direct solve;
+$\tau$ is the e-folding time of $|\langle\theta^2\rangle/\langle\theta^2\rangle_{ss}-1|$
+in a dense run from the usual initial condition, fitted where the gap lies
+between $10^{-6}$ and $5\times10^{-2}$; the last column is when that gap first
+stays below $1\%$.}
+\label{tab:steady}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{figures/forced_relaxation.png}
+\caption{Dense approach to the steady state at the three resolutions, against
+$t$ (left) and against $\kappa t$ (right). The tails collapse when time is
+measured in units of $1/\kappa$.}
+\label{fig:relax}
+\end{figure}
+
+\subsection{\texorpdfstring{$256^2$, from the initial condition to $T=60$}{256x256, from the initial condition to T=60}}
+
+The forced wavenumber matters. At $k_f=1$, amplitudes from $0.02$ to $0.05$ were
+all still climbing at $t=90$. At $k_f=4$ the run length $T=60$ was chosen from
+the diffusive time of the forced scale, $1/(\kappa k_f^2)=12.5$, and from the
+variance changing by less than $1.3\%$ after $t=36$. That change was the slow
+tail of the approach, not a plateau. The measured relaxation time is $\tau=54$,
+four times $1/(\kappa k_f^2)$. At $T=60$, $\langle\theta^2\rangle=0.5109$ is
+still $6.4\%$ above the steady value $0.4804$, which it reaches to $1\%$ only
+at $t\simeq160$. The $1.4\%$ imbalance between production and dissipation at
+$t=60$ ($\langle\theta f\rangle=1.895\times10^{-2}$ against
+$\kappa\langle|\nabla\theta|^2\rangle=1.922\times10^{-2}$) is that residual
+relaxation.
+
+The $256^2$ forced runs therefore sample a late transient rather than the
+steady state. Their comparisons stand, since every error is measured against a
+dense reference integrated alongside, but they do not establish the behaviour
+at steady state; Sec.~\ref{sec:forcedhires} does.
 
 The forcing has zero box mean, so $\langle\theta\rangle$ is conserved: the
 dense reference holds it to $3\times10^{-14}$ over $12\,222$ steps. Truncation
 is not renormalised and no mass projection is applied, so the hybrid solver
 instead drifts by an amount set by the budget, from $1.0\times10^{-2}$ at
-$N=0$, $\chi=16$ to $1\times10^{-13}$ at $N=10$, $\chi=32$. The variance is
-not conserved and is not expected to be: it rises to $1.51$ at $t\simeq4$ and
-settles at $0.5109$, where production balances dissipation to $1.4\%$
-($\langle\theta f\rangle=1.895\times10^{-2}$ against
-$\kappa\langle|\nabla\theta|^2\rangle=1.922\times10^{-2}$ at $t=60$). What the
-hybrid encoding reproduces is that steady level, to $3\times10^{-9}$ relative at
-$N=8$, $\chi=32$.
+$N=0$, $\chi=16$ to $1\times10^{-13}$ at $N=10$, $\chi=32$. The variance rises
+to $1.51$ at $t\simeq4$ and then decays towards the steady value; the hybrid
+encoding reproduces the reference's $0.5109$ at $t=60$ to $3\times10^{-9}$
+relative at $N=8$, $\chi=32$.
 
-In the steady state the variance holds to within $1.3\%$ beyond $t=36$, and the
-intrinsic rank of the exact solution, probed at $\epsilon=10^{-6}$ in the $N=8$
-layout, rises from $12$ to a peak of $56$ and settles at $41.7\pm0.5$ against a
-geometric bound of $256$. The evolution error
-is monotone in $\chi$ for every head size, and the budget saving over the
-standard encoding is $1.4$ at $L_2=10^{-2}$, achieved at $N=6$
-(Table~\ref{tab:forced}).
+Over the final third of the run, the intrinsic rank of the exact solution,
+probed at $\epsilon=10^{-6}$ in the $N=8$ layout, is $41.7\pm0.5$ after a peak
+of $56$, against $38$ for the exact steady state and a geometric bound of
+$256$. The evolution error is monotone in $\chi$ for every head size, and the
+budget saving over the standard encoding is $1.4$ at $L_2=10^{-2}$, achieved at
+$N=6$ (Table~\ref{tab:forced}).
 
 \begin{table}[h]
 \centering
 \small
 \TabForced
 \caption{Forced cellular flow, $256^2$, $f=0.8\sin 4y$, averaged over the final
-third of the run.}
+third of the run ($40\le t\le60$, still $6$--$9\%$ above the steady variance).}
 \label{tab:forced}
 \end{table}
 
 \begin{figure}[h]
 \centering
 \includegraphics[width=\linewidth]{figures/forced_steady.png}
-\caption{Variance plateau, intrinsic rank in the steady state, and
-rate--distortion for the forced cellular flow.}
+\caption{Forced cellular flow at $256^2$ to $T=60$: variance, intrinsic rank,
+and rate--distortion. The variance is still relaxing towards $0.4804$ at the end
+of the run.}
 \label{fig:forced}
 \end{figure}
+
+\subsection{\texorpdfstring{$512^2$ and $1024^2$, held at the steady state}{512x512 and 1024x1024, held at the steady state}}
+\label{sec:forcedhires}
+
+Each run starts from $\theta_{ss}$ encoded at its own $(N,\chi)$, with a dense
+reference started from the same $\theta_{ss}$. The reference does not move: its
+variance stays at the steady value to $4\times10^{-15}$ at $512^2$ and
+$2\times10^{-14}$ at $1024^2$ over $1.6\times10^5$ steps. Every departure of
+the hybrid solution is therefore truncation error fed back through the dynamics,
+and the measurement asks directly whether an encoding can hold the steady
+cascade. The sweep is $N\in\{0,8,10,12\}$ and $\chi\in\{8,12,16,24,32\}$ with
+$\kappa$ as in Table~\ref{tab:steady}, to $T=400$ at $512^2$ (about $2\tau$)
+and $T=200$ at $1024^2$ ($0.25\tau$, set by cost); $\epsilon$ on $\theta$ is
+off, as everywhere.
+
+The error leaves the representation floor within about $20$ time units and
+then levels off (Fig.~\ref{fig:hires}, right). In $32$ of the $40$ runs it grows
+by less than $30\%$ over the second half of the run; the other eight are marked
+in Tables~\ref{tab:hold9} and~\ref{tab:hold10}. With a head, $N\ge8$, and
+$\chi\ge16$, the evolution error lies within $1.1$--$3.8$ times the
+representation error at $512^2$ and $2.6$--$7.7$ times at $1024^2$, inside the
+$1.5$--$25$ of the decaying benchmark. The steady variance is held to
+$2.6\times10^{-5}$ or better at $512^2$ and $1.9\times10^{-4}$ or better at
+$1024^2$ over the same range.
+
+The standard encoding fails at the larger grid. At $1024^2$ with $N=0$ and
+$\chi\le16$ the $L_2$ error reaches $0.65$--$1.24$ and the variance is off by
+$18$--$58\%$; at $\chi=16$ the error grows exponentially through the whole run
+and ends $1.6\times10^3$ times the representation error. At comparable budget,
+$N=8$ with $\chi=16$ ($\rho=0.0081$) holds the state to $7.2\times10^{-4}$.
+At $512^2$ the same failure occurs only at $\chi=8$, where the variance ends
+$37\%$ high and the mean has drifted to $0.31$. The budget saving at fixed
+accuracy is $1.4$--$1.5$ at $512^2$ and $2.5$--$2.8$ at $1024^2$, achieved at
+$N=8$ in every case (Table~\ref{tab:holdsaving}). At $1024^2$ the standard
+encoding's errors at $\chi=16$ and $24$ were still growing at $T$, so those
+savings are lower bounds.
+
+The four $1024^2$ runs still growing at $T=200$ and not yet at $O(1)$ error
+($N=0$ at $\chi=16$, $24$; $N=12$ at $\chi=12$, $16$) are being extended to
+$T=600$.
+
+\begin{table}[h]
+\centering
+\footnotesize
+\TabHoldNine
+\caption{Hold runs at $512^2$, $T=400$: relative $L_2$ error at $t=T$, with its
+ratio to the representation error at the same budget in parentheses. $^\dagger$:
+error grew by more than $30\%$ over the second half of the run.}
+\label{tab:hold9}
+\end{table}
+
+\begin{table}[h]
+\centering
+\footnotesize
+\TabHoldTen
+\caption{Hold runs at $1024^2$, $T=200$, as in Table~\ref{tab:hold9}.}
+\label{tab:hold10}
+\end{table}
+
+\begin{table}[h]
+\centering
+\small
+\TabHoldSaving
+\caption{Budget needed to hold the steady state at a given $L_2$ error, by
+log--log interpolation in $\rho$ at $t=T$. Targets are listed where the standard
+encoding's curve brackets them.}
+\label{tab:holdsaving}
+\end{table}
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/forced_hires.png}
+\caption{Hold runs at $512^2$ (top) and $1024^2$ (bottom). Left: $L_2$ error at
+$t=T$ against $\rho$, evolved (circles) and representation of $\theta_{ss}$ at
+the same $(N,\chi)$ (squares). Centre: error in the steady variance. Right:
+error histories at $\chi=16$, evolved (solid) against representation (dashed).}
+\label{fig:hires}
+\end{figure*}
+
+A run from the initial condition at $512^2$, to $T=600$ where the reference is
+within $1\%$ of the steady variance, gives a harder test
+(Table~\ref{tab:spinup}). At $\chi\le16$ the evolution error is
+$45$--$1400$ times the representation error, except at $N=12$, $\chi=16$
+($1.8$); the ratio is within $6$ only at $N=10$, $\chi=24$ and at $N=12$,
+$\chi\ge16$. At equal $(N,\chi)$ the transient is harder to track than the
+steady state it leads to.
+
+\begin{table}[h]
+\centering
+\footnotesize
+\TabSpinup
+\caption{Forced runs at $512^2$ from the usual initial condition to $T=600$:
+relative $L_2$ error at $t=T$ and its ratio to the representation error.}
+\label{tab:spinup}
+\end{table}
 
 \section{A frozen DNS velocity}
 \label{sec:dns}
@@ -544,6 +708,13 @@ statistics are unaffected.
   $L=9$, $20$ at $L=10$, $12$ at $L=11$), $12$ cellular forced and $16$ under
   the frozen DNS velocity. The $L=10$, $L=11$, forced and DNS sets were run as
   Slurm arrays, one core per task.
+\item Forced flow at $512^2$ and $1024^2$ (Sec.~\ref{sec:forcedhires}),
+  outside Table~\ref{tab:runs}: three direct steady solves and three dense
+  relaxation runs ($T=800$, $800$, $2400$ at $256^2$, $512^2$, $1024^2$); $40$
+  hold runs from $\theta_{ss}$ ($T=400$ at $512^2$, $200$ at $1024^2$, i.e.\
+  $1.6\times10^5$ steps each); $12$ runs from the initial condition at $512^2$
+  ($T=600$, $2.4\times10^5$ steps); $4$ extensions of $1024^2$ hold runs to
+  $T=600$, running. Measured cost $0.1$--$2$~s per step on shared nodes.
 \end{itemize}
 
 \end{document}

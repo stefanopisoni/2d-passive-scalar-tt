@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.5.7)  19 OCT 2026 12:48
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.5.7)  20 NOV 2026 12:29
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -475,27 +475,39 @@ Package pdftex.def Info: figures/history_physical.png  used on input line 330.
 File: figures/history_compression.png Graphic file (type png)
 <use figures/history_compression.png>
 Package pdftex.def Info: figures/history_compression.png  used on input line 34
-7.
+8.
 (pdftex.def)             Requested size: 510.0pt x 268.88374pt.
  [4 <./figures/history_physical.png>] [5 <./figures/history_compression.png>] [
-6] [7]
+6]
+<figures/forced_relaxation.png, id=140, 575.2692pt x 213.9192pt>
+File: figures/forced_relaxation.png Graphic file (type png)
+<use figures/forced_relaxation.png>
+Package pdftex.def Info: figures/forced_relaxation.png  used on input line 518.
+
+(pdftex.def)             Requested size: 510.0pt x 189.65305pt.
+<figures/forced_hires.png, id=142, 736.6722pt x 430.7292pt>
+File: figures/forced_hires.png Graphic file (type png)
+<use figures/forced_hires.png>
+Package pdftex.def Info: figures/forced_hires.png  used on input line 542.
+(pdftex.def)             Requested size: 510.0pt x 298.19589pt.
+ [7 <./figures/forced_relaxation.png>] [8 <./figures/forced_hires.png>]
 No file recap_time_evolution.bbl.
-[8] (./recap_time_evolution.aux)
+[9] (./recap_time_evolution.aux)
  ***********
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-01-19>
  ***********
 Package rerunfilecheck Info: File `recap_time_evolution.out' has not changed.
-(rerunfilecheck)             Checksum: DC7D19F9B08F35A93465CE42AD006FBE;2283.
+(rerunfilecheck)             Checksum: 49FF0CE2A49A817E44865C070B76A9C2;2283.
  ) 
 Here is how much of TeX's memory you used:
- 12538 strings out of 467525
- 186502 string characters out of 5418983
- 643673 words of memory out of 5000000
- 41244 multiletter control sequences out of 15000+600000
+ 12561 strings out of 467525
+ 187092 string characters out of 5418983
+ 644158 words of memory out of 5000000
+ 41263 multiletter control sequences out of 15000+600000
  639712 words of font info for 85 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
- 75i,10n,79p,1007b,581s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 75i,10n,79p,1037b,581s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/local/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb
 ></usr/local/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx12.pfb>
 </usr/local/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx9.pfb></
@@ -519,10 +531,10 @@ f-dist/fonts/type1/public/amsfonts/cm/cmti10.pfb></usr/local/texlive/2026/texmf
 -dist/fonts/type1/public/amsfonts/cm/cmti9.pfb></usr/local/texlive/2026/texmf-d
 ist/fonts/type1/public/amsfonts/cm/cmtt9.pfb></usr/local/texlive/2026/texmf-dis
 t/fonts/type1/public/cm-super/sfrm1000.pfb>
-Output written on recap_time_evolution.pdf (8 pages, 669327 bytes).
+Output written on recap_time_evolution.pdf (9 pages, 911601 bytes).
 PDF statistics:
- 276 PDF objects out of 1000 (max. 8388607)
- 212 compressed objects within 3 object streams
- 55 named destinations out of 1000 (max. 500000)
- 115 words of extra memory for PDF output out of 10000 (max. 10000000)
+ 289 PDF objects out of 1000 (max. 8388607)
+ 220 compressed objects within 3 object streams
+ 59 named destinations out of 1000 (max. 500000)
+ 125 words of extra memory for PDF output out of 10000 (max. 10000000)
 
