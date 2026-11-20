@@ -23,6 +23,8 @@
 #                T = 400 at 512^2 (~2 relaxation times), 200 at 1024^2.
 # FAMILY=spinup  start from the usual low-k random field; T = 600 at 512^2,
 #                where <theta^2> is within 1% of the steady value.
+# FAMILY=holdlong  the hold run to T = 600 at 1024^2, for the cases whose error
+#                was still growing at T = 200 (N=0 chi=16,24; N=12 chi=12,16).
 #
 # The array runs over N in {0, 8, 10, 12} x the given chi list.
 #
@@ -47,6 +49,7 @@ case "${FAMILY}:${L}" in
     hold:9)    T=400; INIT=(--init "${STEADY}"); TAG=HOLD ;;
     hold:10)   T=200; INIT=(--init "${STEADY}"); TAG=HOLD ;;
     spinup:9)  T=600; INIT=();                   TAG=FRC ;;
+    holdlong:10) T=600; INIT=(--init "${STEADY}"); TAG=LONG ;;
     *)         echo "unsupported ${FAMILY} at L=${L}" >&2; exit 2 ;;
 esac
 
