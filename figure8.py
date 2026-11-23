@@ -218,7 +218,7 @@ for ax in (ax_c, ax_d):
 for chi in CHI_LIST:
     v = (N_FIXED, chi)
     c = chi_colors[chi]
-    lab = rf'$\chi_{{\mathrm{{std}}}}={chi}$ ($\rho={100 * avg_cr[v]:.2f}\%$)'
+    lab = rf'$\chi={chi}$ ($\rho={100 * avg_cr[v]:.2f}\%$)'
     ax_a.loglog(k_np, E_hyb[v].cpu().numpy(), color=c, linewidth=1.0, alpha=0.9, label=lab)
     ax_c.semilogx(k_np, ratio[v], color=c, linewidth=1.0, alpha=0.9, label=lab)
     ax_c.axvline(k_galerkin[v], color=c, linestyle=':', linewidth=1.0, alpha=0.9)
@@ -227,7 +227,7 @@ for chi in CHI_LIST:
 for N in N_LIST:
     v = (N, CHI_FIXED)
     c = N_colors[N]
-    lab = rf'$p_1=2^{{{N}}}$ ($\tilde{{\chi}}={BD_REMAINING_FIXED[N]}$)'
+    lab = rf'$L_h={N // 2}$ ($\tilde{{\chi}}={BD_REMAINING_FIXED[N]}$)'
     ax_b.loglog(k_np, E_hyb[v].cpu().numpy(), color=c, linestyle='-.', linewidth=1.0,
                 alpha=0.9, label=lab)
     ax_d.semilogx(k_np, ratio[v], color=c, linestyle='-.', linewidth=1.0, alpha=0.9, label=lab)
@@ -248,10 +248,10 @@ for ax in (ax_a, ax_c):
 
 # Panel labels
 panel_text = {
-    'a': rf'a) $E(k)$, $p_1=2^{{{N_FIXED}}}$',
-    'b': rf'b) $E(k)$, $\chi_{{\mathrm{{std}}}}={CHI_FIXED}$',
-    'c': rf'c) $E/E_{{\mathrm{{DNS}}}}$, $p_1=2^{{{N_FIXED}}}$',
-    'd': rf'd) $E/E_{{\mathrm{{DNS}}}}$, $\chi_{{\mathrm{{std}}}}={CHI_FIXED}$',
+    'a': rf'a) $E(k)$, $L_h={N_FIXED // 2}$',
+    'b': rf'b) $E(k)$, $\chi={CHI_FIXED}$',
+    'c': rf'c) $E/E_{{\mathrm{{DNS}}}}$, $L_h={N_FIXED // 2}$',
+    'd': rf'd) $E/E_{{\mathrm{{DNS}}}}$, $\chi={CHI_FIXED}$',
 }
 for key, ax in zip('abcd', (ax_a, ax_b, ax_c, ax_d)):
     lx, ly = label_pos[key]
@@ -262,9 +262,9 @@ for key, ax in zip('abcd', (ax_a, ax_b, ax_c, ax_d)):
 ax_c.legend(loc=legend_loc['c'], **legend_kw)
 ax_d.legend(loc=legend_loc['d'], **legend_kw)
 annot_handles = [
-    Patch(facecolor=hybrid_color, alpha=0.08, label=rf'exact region ($p_1=2^{{{N_FIXED}}}$)'),
-    Line2D([], [], color='grey', linestyle='--', label=r'exact-region edge $k=2^{N/2}$'),
-    Line2D([], [], color='grey', linestyle=':', label='Galerkin cutoff, same DOF'),
+    Patch(facecolor=hybrid_color, alpha=0.08, label=rf'head scales ($L_h={N_FIXED // 2}$)'),
+    Line2D([], [], color='grey', linestyle='--', label=r'head edge $k=2^{L_h}$'),
+    Line2D([], [], color='grey', linestyle=':', label=r'Galerkin cutoff, same $N_{\mathrm{par}}$'),
 ]
 ax_a.legend(handles=[ax_a.get_lines()[0]] + annot_handles, loc=legend_loc['a'], **legend_kw)
 
