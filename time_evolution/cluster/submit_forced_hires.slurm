@@ -23,14 +23,19 @@
 #                T = 400 at 512^2 (~2 relaxation times), 200 at 1024^2.
 # FAMILY=spinup  start from the usual low-k random field; T = 600 at 512^2,
 #                where <theta^2> is within 1% of the steady value.
-# FAMILY=holdlong  the hold run to T = 600 at 1024^2, for the cases whose error
-#                was still growing at T = 200 (N=0 chi=16,24; N=12 chi=12,16).
+# FAMILY=holdlong  the hold run to T = 600 at 1024^2. First submitted for the
+#                four cases still growing at T = 200 (N=0 chi=16,24; N=12
+#                chi=12,16); N=0 chi=24 then lost the state between t = 200 and
+#                600, so the whole sweep was extended to compare at equal T.
 #
 # The array runs over N in {0, 8, 10, 12} x the given chi list.
 #
 # Measured cost per step on sim nodes at chi=32: 0.5-1.3 s at 512^2, 0.9-2.2 s
 # at 1024^2 (N=12 the dearest). A hold run is 163k steps, so 1024^2 N=12 chi=32
 # needs ~107 h and is submitted to long_sim; everything else fits 5 days.
+# T = 600 at 1024^2 takes 3.1-3.4x the T = 200 wall time: anything above ~30 h
+# at T = 200 goes to long_sim with --time beyond its 10-day default
+# (N=12 chi=32: ~13 days).
 
 set -euo pipefail
 

@@ -21,6 +21,7 @@ STEADY = os.environ.get("PSCALAR_STEADY",
                         os.path.join(os.path.dirname(RESULTS), "forced_steady"))
 OUT = os.path.join(_HERE, "figures", "forced_hires.png")
 OUT_RELAX = os.path.join(_HERE, "figures", "forced_relaxation.png")
+OUT_LONG = os.path.join(_HERE, "figures", "forced_long.png")
 OUT_TEX = os.path.join(_HERE, "tables_forced_hires.tex")
 
 KAPPA = {8: 5e-3, 9: 1.25e-3, 10: 3.125e-4}
@@ -110,6 +111,55 @@ def fig_hold():
     return hold
 
 
+def fig_long():
+    """1024^2 hold runs extended to T=600, overlaid on their T=200 counterparts."""
+    hold, long = load("HOLD", 10), load("LONG", 10)
+    if not long:
+        return long
+    fig, (ax_e, ax_v) = plt.subplots(1, 2, figsize=(8, 3))
+    styles = ["-", "-.", ":", (0, (5, 1))]
+    for i, ((N, bd), d) in enumerate(sorted(long.items())):
+        c, ls = N_COLOR[N], styles[i % len(styles)]
+        lab = rf"N={N}, $\chi$={bd}"
+        ax_e.semilogy(d["t"], d["err_l2"], color=c, ls=ls, label=lab)
+        ax_e.semilogy(d["t"], d["repr_err_l2"], color=c, ls=ls, lw=0.6, alpha=0.6)
+        ax_v.semilogy(d["t"], np.abs(d["tt_variance"] / VAR_SS[10] - 1),
+                      color=c, ls=ls, label=lab)
+        h = hold.get((N, bd))
+        if h is not None:
+            ax_e.plot(h["t"][-1], h["err_l2"][-1], "o", color=c, ms=4, mfc="none")
+    for ax in (ax_e, ax_v):
+        ax.axvline(200, color="0.5", lw=0.6, ls="--")
+        ax.legend(loc="best")
+    ax_e.set(xlabel="t", ylabel=r"relative $L_2$ error",
+             title=r"1024$^2$ to T=600: evolved (thick), compressed (thin)")
+    ax_v.set(xlabel="t",
+             ylabel=r"$|\langle\theta^2\rangle_{TT}/\langle\theta^2\rangle_{ss}-1|$",
+             title="Steady variance error")
+    fig.tight_layout()
+    fig.savefig(OUT_LONG)
+    print("->", OUT_LONG)
+    return long
+
+
+def long_table(long):
+    """Extended runs: error at T=200 and T=600, ratio to the representation
+    error, growth over the second half, and steady-variance error at T=600."""
+    hold = load("HOLD", 10)
+    lines = [r"\begin{tabular}{rrrcccrc}", r"\toprule",
+             r"$N$ & $\chi$ & $\rho$ & $L_2(t=200)$ & $L_2(t=600)$ & ratio & growth & "
+             r"variance error\\", r"\midrule"]
+    for (N, bd), d in sorted(long.items()):
+        h = hold.get((N, bd))
+        e200 = np.interp(200.0, d["t"], d["err_l2"]) if h is None else h["err_l2"][-1]
+        e, r = d["err_l2"][-1], d["repr_err_l2"][-1]
+        lines.append(rf"{N} & {bd} & {d['tt_params'][-1] / 4.0 ** 10:.4f} & {sci(e200)} & "
+                     rf"{sci(e)} & {e / r:.1f} & {growth(d):.2f} & "
+                     rf"{sci(abs(d['tt_variance'][-1] / VAR_SS[10] - 1))}\\")
+    lines += [r"\bottomrule", r"\end{tabular}"]
+    return "\n".join(lines)
+
+
 def fig_relaxation():
     fig, (ax_g, ax_s) = plt.subplots(1, 2, figsize=(8, 3))
     rel = {}
@@ -193,7 +243,7 @@ def saving_table(hold):
     return "\n".join(lines)
 
 
-def tables(hold, rel):
+def tables(hold, rel, long):
     tex = [r"\newcommand{\TabSteady}{%", r"\begin{tabular}{rrrrrr}", r"\toprule",
            r"grid & $\kappa$ & $\langle\theta^2\rangle_{ss}$ & $\tau$ & "
            r"$\kappa\tau$ & within $1\%$ at\\", r"\midrule"]
@@ -210,6 +260,8 @@ def tables(hold, rel):
     tex += [r"\newcommand{\TabHoldSaving}{%", saving_table(hold) + "}", ""]
     tex += [r"\newcommand{\TabSpinup}{%",
             grid_table(load("FRC", 9), (8, 16, 24), False) + "}", ""]
+    if long:
+        tex += [r"\newcommand{\TabLong}{%", long_table(long) + "}", ""]
     with open(OUT_TEX, "w") as f:
         f.write("\n".join(tex))
     print("->", OUT_TEX)
@@ -237,14 +289,26 @@ def summary(hold, rel):
                   f"ratio={d['err_l2'][-1]/d['repr_err_l2'][-1]:7.2f} "
                   f"ref_var={d['ref_variance'][-1]/VAR_SS[L]-1:+.1e} "
                   f"tt-ref var={d['tt_variance'][-1]/d['ref_variance'][-1]-1:+.1e} "
-                  f"growth={growth(d):.2f}")
+                  f"growth={growth(d):.2f} mass={abs(d['tt_mass'][-1]):.1e}")
+    # The extended runs repeat the T=200 hold runs exactly up to t=200.
+    hold10 = hold[10]
+    for (N, bd), d in sorted(load("LONG", 10).items()):
+        h = hold10.get((N, bd))
+        if h is None:
+            continue
+        _, i, j = np.intersect1d(np.round(d["t"], 6), np.round(h["t"], 6),
+                                 return_indices=True)
+        i, j = i[d["t"][i] > 0], j[d["t"][i] > 0]
+        print(f"LONG10 vs HOLD10 N={N} chi={bd}: {len(i)} common samples, max rel "
+              f"diff of err_l2 {np.max(np.abs(d['err_l2'][i] / h['err_l2'][j] - 1)):.1e}")
 
 
 def main():
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     hold = fig_hold()
     rel = fig_relaxation()
-    tables(hold, rel)
+    long = fig_long()
+    tables(hold, rel, long)
     summary(hold, rel)
 
 
