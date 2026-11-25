@@ -523,6 +523,18 @@ def hybrid_norm(mps) -> float:
     return float(torch.sqrt(torch.clamp(E.reshape(-1)[0], min=0.0)))
 
 
+def hybrid_inner(x, y) -> float:
+    """<x, y>, computed by contraction (no dense vector formed). Bonds may differ."""
+    A, B = tensors(x), tensors(y)
+    if len(A) != len(B):
+        raise ValueError("operands must have the same number of sites")
+    E = torch.ones(1, 1, dtype=A[0].dtype)
+    for a, b in zip(A, B):
+        E = torch.einsum("ar,apb->rpb", E, a)
+        E = torch.einsum("rpb,rpv->bv", E, b)
+    return float(E.reshape(-1)[0])
+
+
 def hybrid_sum(mps) -> float:
     """Sum of all entries (i.e. mass), by contracting against the all-ones vector."""
     A = tensors(mps)

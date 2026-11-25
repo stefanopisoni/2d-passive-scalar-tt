@@ -133,6 +133,147 @@ def step_rk4(h, rhs: Callable, dt: float, trunc: Callable):
 STEPPERS = {"euler": step_euler, "rk2": step_rk2, "ssprk3": step_ssprk3, "rk4": step_rk4}
 
 
+# --------------------------------------------------------------------------
+# budget-consistent compression
+# --------------------------------------------------------------------------
+# Consistency is defined on the update map, not on individual truncations.
+# The budgets of the two invariants of the semi-discrete equation,
+#   mass      d<1,theta>/dt  = <1,f>        (transport and diffusion conserve it)
+#   variance  d|theta|^2/dt  = P(theta)     (transport contributes exactly zero)
+# are integrated alongside theta by the same time stepper (its stage values and
+# weights). The compressed output of each update is then projected onto them:
+# its mean is set to the integrated mass by adding a uniform field, and its
+# fluctuation is rescaled by one scalar, as the compressed fields of the paper,
+# so that |theta|^2 = V. The uniform field is a rank-1 TT, so the state carries
+# bond chi + 1, counted in rho. Every truncation inside the update (RK stages,
+# the intermediates of the right-hand side, the vectors of an implicit solver)
+# stays plain: it is part of computing the update, and the projection removes its
+# net effect on the invariants. Mass is then conserved exactly and the variance
+# changes only through diffusion and forcing, up to the order of the stepper.
+# Spectra, flatness and PDFs are left free; they are what the compression
+# changes and what is measured.
+#
+# Stepper-specific quadratures of P (the Butcher weights b on the stage values):
+#   ssprk3              (theta_n, u1, u2) with b = (1/6, 1/6, 2/3)
+# For implicit midpoint (Crank-Nicolson) the quadrature is P at the midpoint,
+# which is its exact discrete identity; backward Euler's identity carries the
+# extra numerical damping -|y - theta|^2.
+
+def project_invariants(h, L: int, N: int, target_sum: float, target_norm2: float):
+    """m* 1 + s (h - m 1): set the mean of h to target_sum / n^2 and rescale its
+    fluctuation so that |.|^2 = target_norm2. Returns (projected, s, |m* - m|)."""
+    n2 = 4 ** L
+    m_t, m_h = target_sum / n2, ho.hybrid_sum(h) / n2
+    fl2 = ho.hybrid_norm(h) ** 2 - n2 * m_h ** 2
+    s = np.sqrt(max(target_norm2 - n2 * m_t ** 2, 0.0) / fl2) if fl2 > 0 else 1.0
+    out = ho.hybrid_add(ho.hybrid_scale(h, s), ho.hybrid_constant(L, N, m_t - s * m_h))
+    return out, s, abs(m_t - m_h)
+
+
+def dense_project_invariants(f: np.ndarray, target_sum: float, target_norm2: float):
+    """Dense counterpart of project_invariants."""
+    m_t, m_h = target_sum / f.size, float(f.mean())
+    fl = f - m_h
+    s = np.sqrt(max(target_norm2 - f.size * m_t ** 2, 0.0) / float((fl ** 2).sum()))
+    return m_t + s * fl
+
+
+class PhysicalBudget:
+    """Budgets of mass and variance for a hybrid state, and the projection.
+
+    In skew form with an antisymmetric periodic difference operator the
+    transport term contributes exactly zero to both, for any velocity, so the
+    variance production P contains only diffusion, 2 kappa <x, lap x>, and a
+    steady source, 2 <x, f>, and the mass changes only through the source; all
+    are exact contractions. The log records |s - 1| of every rescaling s and the
+    size of every mean correction.
+    """
+
+    def __init__(self, L: int, N: int, kappa: float = 0.0, lap=None, forcing=None):
+        self.L, self.N, self.kappa, self.lap, self.forcing = L, N, kappa, lap, forcing
+        if kappa and lap is None:
+            raise ValueError("kappa > 0 needs the Laplacian MPO")
+        self.f_sum = ho.hybrid_sum(forcing) if forcing is not None else 0.0
+        self.reset()
+
+    def mass_rate(self) -> float:
+        """d sum(x) / dt."""
+        return self.f_sum
+
+    def production(self, x) -> float:
+        """d |x|^2 / dt."""
+        p = 0.0
+        if self.kappa:
+            p += 2.0 * self.kappa * ho.hybrid_inner(x, ho.hybrid_apply(self.lap, x, self.N))
+        if self.forcing is not None:
+            p += 2.0 * ho.hybrid_inner(x, self.forcing)
+        return p
+
+    def project(self, h, target_sum: float, target_norm2: float):
+        out, s, dm = project_invariants(h, self.L, self.N, target_sum, target_norm2)
+        self.n += 1
+        self.dev_sum += abs(s - 1.0)
+        self.dev_max = max(self.dev_max, abs(s - 1.0))
+        self.dm_max = max(self.dm_max, dm)
+        return out
+
+    def update_with(self, h, increment, trunc):
+        """h + increment, compressed and projected onto its exact mass and norm."""
+        target_sum = ho.hybrid_sum(h) + ho.hybrid_sum(increment)
+        target = (ho.hybrid_norm(h) ** 2 + 2.0 * ho.hybrid_inner(h, increment)
+                  + ho.hybrid_norm(increment) ** 2)
+        return self.project(trunc(ho.hybrid_add(h, increment)), target_sum, target)
+
+    def reset(self):
+        self.n, self.dev_sum, self.dev_max, self.dm_max = 0, 0.0, 0.0, 0.0
+
+    @property
+    def dev_mean(self) -> float:
+        return self.dev_sum / max(self.n, 1)
+
+
+def dense_production(x: np.ndarray, kappa: float, dx: float, forcing=None,
+                     diff_coef: Dict[int, float] = None) -> float:
+    """Dense counterpart of PhysicalBudget.production."""
+    diff_coef = diff_coef or hop.D2_CENTRAL_2
+    p = 0.0
+    if kappa:
+        lap = (_apply_stencil_dense(x, diff_coef, hop.AXIS_X)
+               + _apply_stencil_dense(x, diff_coef, hop.AXIS_Y)) / dx ** 2
+        p += 2.0 * kappa * float((x * lap).sum())
+    if forcing is not None:
+        p += 2.0 * float((x * forcing).sum())
+    return p
+
+
+def dense_step_ssprk3_budget(f: np.ndarray, rhs: Callable, dt: float, kappa: float,
+                             dx: float, forcing=None) -> np.ndarray:
+    """Dense twin of step_ssprk3_budget: the same quadrature and projection, so a
+    lossless hybrid run reproduces it to round-off and the two differ only by
+    compression. The projection replaces the stepper's own O(dt^4) damping of the
+    variance by the physical budget."""
+    P = lambda x: dense_production(x, kappa, dx, forcing)  # noqa: E731
+    u1 = f + dt * rhs(f)
+    u2 = 0.75 * f + 0.25 * (u1 + dt * rhs(u1))
+    out = f / 3.0 + 2.0 / 3.0 * (u2 + dt * rhs(u2))
+    target = float((f ** 2).sum()) + dt * (P(f) / 6.0 + P(u1) / 6.0 + 2.0 * P(u2) / 3.0)
+    target_sum = float(f.sum()) + dt * (float(forcing.sum()) if forcing is not None else 0.0)
+    return dense_project_invariants(out, target_sum, target)
+
+
+def step_ssprk3_budget(h, rhs: Callable, dt: float, trunc: Callable,
+                       budget: PhysicalBudget):
+    """SSPRK3 step with budget-consistent compression (see the block above)."""
+    m0, v0 = ho.hybrid_sum(h), ho.hybrid_norm(h) ** 2
+    u1 = trunc(ho.hybrid_axpy(1.0, h, dt, rhs(h)))
+    u2 = trunc(ho.hybrid_axpy(0.75, h, 0.25, ho.hybrid_axpy(1.0, u1, dt, rhs(u1))))
+    out = trunc(ho.hybrid_axpy(1.0 / 3.0, h, 2.0 / 3.0,
+                               ho.hybrid_axpy(1.0, u2, dt, rhs(u2))))
+    target = v0 + dt * (budget.production(h) / 6.0 + budget.production(u1) / 6.0
+                        + 2.0 * budget.production(u2) / 3.0)
+    return budget.project(out, m0 + dt * budget.mass_rate(), target)
+
+
 def linear_rhs(op, N: int, trunc: Callable = no_truncation,
                fused: bool = False, head_op=None, sparse: bool = False) -> Callable:
     """RHS callable for a constant-coefficient operator held as one MPO.
@@ -362,11 +503,23 @@ def velocity_from_streamfunction(psi, L: int, N: int, dx: float,
     return ux, uy
 
 
+def transport_operators(L: int, dx: float, kappa: float = 0.0,
+                        adv_coef: Dict[int, float] = None,
+                        diff_coef: Dict[int, float] = None):
+    """``(Dx, Dy, lap)`` MPOs used by :func:`variable_rhs`; ``lap`` is None if kappa is 0."""
+    adv_coef = adv_coef or hop.D1_CENTRAL_2
+    diff_coef = diff_coef or hop.D2_CENTRAL_2
+    Dx = hop.derivative_mpo(L, hop.AXIS_X, adv_coef, dx=dx)
+    Dy = hop.derivative_mpo(L, hop.AXIS_Y, adv_coef, dx=dx)
+    lap = hop.laplacian_mpo(L, diff_coef, dx=dx) if kappa else None
+    return Dx, Dy, lap
+
+
 def variable_rhs(ux, uy, L: int, N: int, dx: float, kappa: float = 0.0,
                  form: str = "skew", adv_coef: Dict[int, float] = None,
                  diff_coef: Dict[int, float] = None, forcing=None,
                  compress_inner: bool = True,
-                 trunc: Callable = no_truncation) -> Callable:
+                 trunc: Callable = no_truncation, ops=None) -> Callable:
     """RHS of the passive scalar with a prescribed, space-dependent velocity.
 
     ``form`` selects the discretisation of the transport term:
@@ -383,12 +536,13 @@ def variable_rhs(ux, uy, L: int, N: int, dx: float, kappa: float = 0.0,
     Every intermediate is compressed: a Hadamard product multiplies bond
     dimensions (chi_u * chi_theta), so leaving the stages uncompressed makes the
     final sweep cost O(chi^3) on a bond dimension several hundred wide.
+
+    ``ops`` takes the ``(Dx, Dy, lap)`` of :func:`transport_operators`, for a
+    caller that changes the velocity often and should not rebuild the MPOs.
     """
-    adv_coef = adv_coef or hop.D1_CENTRAL_2
-    diff_coef = diff_coef or hop.D2_CENTRAL_2
-    Dx = hop.derivative_mpo(L, hop.AXIS_X, adv_coef, dx=dx)
-    Dy = hop.derivative_mpo(L, hop.AXIS_Y, adv_coef, dx=dx)
-    lap = hop.laplacian_mpo(L, diff_coef, dx=dx) if kappa else None
+    if ops is None:
+        ops = transport_operators(L, dx, kappa, adv_coef, diff_coef)
+    Dx, Dy, lap = ops
     if form not in ("advective", "conservative", "skew"):
         raise ValueError(f"unknown form {form!r}")
 
