@@ -6,13 +6,22 @@
 \usepackage{xcolor}
 \usepackage{hyperref}
 \usepackage{enumitem}
+\usepackage{tcolorbox}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,calc,fit,backgrounds,shapes.geometric}
 
 \newcommand{\code}[1]{\texttt{\small #1}}
 \setlist[itemize]{itemsep=1pt, topsep=3pt, parsep=0pt}
+\setlist[enumerate]{itemsep=1pt, topsep=3pt, parsep=0pt}
+
+\newtcolorbox{keybox}[1]{colback=blue!3, colframe=blue!45!black, boxrule=0.6pt,
+  arc=2pt, left=6pt, right=6pt, top=4pt, bottom=4pt, fonttitle=\bfseries\small,
+  title={#1}}
 
 \begin{document}
 
-\title{Hybrid Tensor-Train Time Evolution:\\ Status, Findings, and Outlook}
+\title{Hybrid Tensor-Train Time Evolution of a 2D Passive Scalar:\\
+Status, Design Decisions, and the Kraichnan Campaign}
 
 \author{S. Pisoni}
 \affiliation{TN\_Turbulence project --- 2D passive scalar study}
@@ -20,664 +29,787 @@
 \date{\today}
 
 \begin{abstract}
-Concise status note on the machinery built to evolve a 2D scalar field in the
-hybrid tensor-train (TT) encoding of the compression study. Records the
-equations being solved, what has been implemented, what has been checked, the
-findings and caveats so far, and the plan going forward. Detailed numbers live
-in the test suite; this note keeps only the conclusions. As of this revision the
-machinery is validated, a genuine cascade has been run, and the central
-question --- whether the TT rank stays bounded once fine scales are generated ---
-has been answered affirmatively.
+We evolve a two-dimensional passive scalar entirely inside the hybrid
+tensor-train (TT) encoding of our compression study, in which a dense head
+stores the coarse scales exactly and a TT tail compresses the fine ones. Every
+operator acts on the compressed field as a matrix-product operator, and every run
+is paired with a dense twin driven by identical inputs, so that the difference
+between the two is the effect of compression alone. Three results are
+established: the rank of the field stays bounded in a genuine cascade; at fixed
+accuracy the hybrid encoding needs $1.4$--$2.5$ times fewer parameters than a
+standard TT; and at $1024^2$ the standard TT loses a forced steady state that the
+hybrid encoding holds. This revision adds two things. First, a rule that makes
+compression physically consistent for any time stepper: each compressed update
+is projected so that the mass and the variance of the scalar obey their physical
+budgets. Second, the
+Kraichnan model as the next test flow: a synthetic random velocity, cheap in TT
+form, whose scalar statistics are turbulent-like and partly known exactly.
 \end{abstract}
 
 \maketitle
 
-\section{The equations}
+% =========================================================================
+\section{The project at a glance}
+% =========================================================================
 
-\subsection{Passive scalar advection--diffusion}
+The compression study showed that the hybrid TT stores a highly intermittent
+scalar field with the best small-scale statistics among the methods compared, at
+a fixed number of parameters. The question here is whether the field can also be
+\emph{evolved} in that format: advanced in time without ever being
+decompressed, with an error that stays bounded and statistics that stay
+correct. Five ideas organise the work.
 
-The target problem, and the one the compression study characterises statistically:
+\begin{keybox}{Five ideas}
+\begin{enumerate}[leftmargin=*]
+\item \textbf{Hybrid encoding.} A dense head holds one amplitude vector per
+      coarse block; a TT tail holds a dictionary of $\chi$ fine-scale shapes
+      shared by all blocks (Fig.~\ref{fig:encoding}). The head size $N$ is the
+      number of bits it absorbs; $N=0$ is a standard TT.
+\item \textbf{Operators act on the compressed field.} Derivatives, the
+      Laplacian and multiplication by the velocity are matrix-product operators
+      (MPOs). After each operation the result is truncated back to bond
+      dimension $\chi$.
+\item \textbf{A dense twin isolates compression.} Each TT run is accompanied by
+      a dense run with the same grid, stencils, time stepper and inputs. The
+      difference between the two is the effect of compression and nothing else
+      (Fig.~\ref{fig:step}).
+\item \textbf{Two kinds of error.} The pathwise $L_2$ distance between the TT
+      and dense fields, and the statistics of the compression paper: spectrum,
+      structure functions, flatness and increment PDFs.
+\item \textbf{Compression must respect the physics.} Truncation changes the
+      two invariants of the equation, mass and variance. We correct each
+      compressed update so that mass is conserved and the variance changes only
+      through diffusion and forcing, for any time stepper
+      (Sec.~\ref{sec:consistency}).
+\end{enumerate}
+\end{keybox}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[scale=0.95, every node/.style={font=\small}]
+  % ---- grid with coarse blocks
+  \fill[blue!7] (0,0) rectangle (4,4);
+  \draw[step=0.25, gray!35, very thin] (0,0) grid (4,4);
+  \draw[step=1, blue!50!black, thick] (0,0) grid (4,4);
+  \fill[orange!25] (2,2) rectangle (3,3);
+  \draw[step=0.25, orange!60!black, very thin] (2,2) grid (3,3);
+  \draw[very thick, orange!80!black] (2,2) rectangle (3,3);
+  \node[below] at (2,-0.05) {$2^L\times2^L$ grid};
+  \node[above, align=center] at (2,4.05) {$2^{N/2}\times2^{N/2}$ coarse blocks $B$};
+  \draw[->, orange!80!black, thick] (3.05,2.5) .. controls (3.9,2.9) and (4.6,2.4) .. (5.35,1.55);
+  \node[orange!70!black, align=left, font=\footnotesize, anchor=west] at (4.3,3.55) {fine structure\\ inside a block};
+  % ---- network
+  \begin{scope}[shift={(6.3,1.5)}]
+    \node[draw, thick, fill=blue!15, minimum width=1.5cm, minimum height=1.0cm] (H) at (0,0) {$A^{0}[B,\alpha]$};
+    \draw[line width=1.6pt, blue!50!black] (H.south) -- ++(0,-0.65)
+         node[below, align=center, font=\footnotesize] {coarse index $B$\\($2^N$ values)};
+    \foreach \i in {1,...,5} {
+      \node[draw, thick, circle, fill=orange!25, minimum size=0.55cm] (T\i) at (1.3+0.95*\i,0) {};
+      \draw (T\i.south) -- ++(0,-0.45);
+    }
+    \draw[thick] (H.east) -- node[above, font=\footnotesize]{$\chi$} (T1.west);
+    \foreach \i/\j in {1/2,2/3,3/4,4/5} \draw[thick] (T\i.east) -- node[above, font=\footnotesize]{$\chi$} (T\j.west);
+    \node[below, font=\footnotesize] at (4.15,-0.55) {fine bits, compressed (tail)};
+    \node[above, font=\footnotesize, blue!50!black] at (0,0.55) {dense, exact (head)};
+  \end{scope}
+  \node[font=\small] at (9.4,-1.35)
+     {$\theta(B,\text{fine}) \;=\; \sum_{\alpha=1}^{\chi} A^{0}[B,\alpha]\;\Phi_\alpha(\text{fine})$};
+\end{tikzpicture}
+\caption{The hybrid TT. The grid is split into coarse blocks. The dense head
+stores, for every block $B$, the $\chi$ coefficients $A^0[B,\alpha]$. The tail is a
+TT over the remaining bits (Morton order) and encodes $\chi$ fine-scale shape
+functions $\Phi_\alpha$ shared by all blocks. The large scales are therefore
+stored without rank error; only the fine structure is compressed.}
+\label{fig:encoding}
+\end{figure}
+
+Table~\ref{tab:campaigns} lists the flows studied so far. Each was added to answer
+a question its predecessor could not, and Fig.~\ref{fig:hvs} shows the central
+result obtained on the first.
+
+\begin{table*}[t]
+\caption{Test flows, in the order they were introduced.}
+\label{tab:campaigns}
+\begin{ruledtabular}
+\begin{tabular}{p{2.6cm}p{4.3cm}p{3.6cm}p{5.4cm}}
+Flow & Why it was added & Status & Main outcome\\
+\hline
+Decaying cellular flow & Simplest genuine cascade; exact control of every error source & Done, $256^2$--$2048^2$ & Rank saturates. At fixed accuracy the hybrid needs $1.8$--$2.5\times$ fewer parameters, flat in resolution\\
+Forced cellular flow, steady state & The statistically steady regime the paper describes & $512^2$ done; $1024^2$ extended to $T=600$, running & The hybrid holds the state. The standard TT at $\chi\le24$ loses it at $1024^2$\\
+Frozen DNS snapshot & A turbulent velocity field & $\chi\le48$ done; $\chi=64$--$128$ running & Rank saturates at $61\%$ of the geometric bound; error not monotone in $\chi$; saving $2.1\times$ at $L_2=10^{-1}$\\
+Kraichnan model & Time-dependent, turbulent-like straining with known statistics & Model validated; TT runs running & Sec.~\ref{sec:kraichnan}\\
+\end{tabular}
+\end{ruledtabular}
+\end{table*}
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.92\linewidth]{figures/hybrid_vs_standard.png}
+\caption{The hybrid advantage survives time evolution (decaying cellular flow,
+$256^2$, plain truncation). Top left: the $L_2$ error of the evolved field
+against the fraction of parameters $\rho$. Top centre: the error of merely
+compressing the exact field at the same budget. Top right: their ratio, the
+penalty for evolving. Bottom right: the error saturates in time instead of
+drifting. The same picture holds from $256^2$ to $2048^2$, with optimal head
+sizes $N\simeq L$.}
+\label{fig:hvs}
+\end{figure*}
+
+% =========================================================================
+\section{How a time step works}
+\label{sec:step}
+% =========================================================================
+
+\paragraph{In words.} The scalar is advected by a prescribed velocity and
+diffused. The velocity enters as a TT and multiplies the field elementwise.
+Derivatives are finite-difference stencils written as MPOs. One time step of a
+three-stage Runge--Kutta method evaluates the right-hand side three times. Each
+evaluation is a short chain of MPO--MPS products, each followed by a truncation.
+The step ends with a rescaling that enforces the variance budget
+(Sec.~\ref{sec:consistency}). The dense twin performs the same arithmetic on the
+full grid. Figure~\ref{fig:step} shows the whole pipeline.
+
+\begin{figure*}[t]
+\centering
+\begin{tikzpicture}[font=\small, >=Latex,
+    box/.style={draw, thick, rounded corners=2pt, align=center, inner sep=4pt},
+    tt/.style={box, fill=orange!18},
+    dn/.style={box, fill=gray!12},
+    bud/.style={box, fill=green!12},
+    lab/.style={font=\footnotesize, align=center}]
+  % inputs
+  \node[box, fill=yellow!20] (in) at (1.7,-1.75) {shared inputs\\[-1pt]\footnotesize velocity $\mathbf{u}(t)$, forcing $f(t)$\\[-1pt]\footnotesize (same random draws)};
+  % TT lane
+  \node[tt] (t0) at (0,0) {$\theta_n$\\[-1pt]\footnotesize hybrid TT, bond $\chi$};
+  \node[tt] (rhs) at (4.0,0) {right-hand side $R(Y)$\\[-1pt]\footnotesize $\mathsf{D}Y,\ \mathbf{u}\!\odot\!\mathsf{D}Y,\ \mathsf{D}(\mathbf{u}Y),\ \nabla_h^2Y$\\[-1pt]\footnotesize MPO--MPS products, truncated};
+  \node[tt] (stg) at (8.15,0) {RK stages $Y_1,Y_2,Y_3$\\[-1pt]\footnotesize truncated};
+  \node[tt] (tl) at (10.75,0) {$\tilde\theta_{n+1}$};
+  \node[box, fill=blue!12] (rs) at (13.4,0) {project onto\\[-1pt]\footnotesize $M_{n+1}$ and $V_{n+1}$};
+  \draw[->, thick] (t0) -- (rhs);
+  \draw[->, thick] (rhs) -- (stg);
+  \draw[->, thick] ($(stg.north)+(-0.3,0)$) to[out=150, in=30] node[above, lab]{3 evaluations} ($(rhs.north)+(0.6,0)$);
+  \draw[->, thick] (stg) -- (tl);
+  \draw[->, thick] (tl) -- (rs);
+  % budget
+  \node[bud] (bu) at (9.3,-1.75) {physical budgets, integrated by the same stepper\\[-1pt]
+        \footnotesize $V_{n+1}=\|\theta_n\|^2+\Delta t\sum_i b_i\,P(Y_i)$,\quad
+        $P(Y)=2\kappa\langle Y,\nabla_h^2Y\rangle+2\langle Y,f\rangle$\\[-1pt]
+        \footnotesize $M_{n+1}=\langle1,\theta_n\rangle+\Delta t\,\langle1,f\rangle$};
+  \draw[->, thick, green!40!black] (stg.south) -- ($(bu.north)+(-1.4,0)$);
+  \draw[->, thick, green!40!black] ($(bu.north)+(3.0,0)$) -- (rs.south);
+  % dense lane
+  \node[dn] (d0) at (0,-3.55) {$\theta_n$\\[-1pt]\footnotesize dense $2^L\times2^L$};
+  \node[dn] (dstep) at (5.6,-3.55) {same stencils, same stepper, same budget rescaling\\[-1pt]\footnotesize no truncation};
+  \node[dn] (d1) at (10.8,-3.55) {$\theta^{\rm dense}_{n+1}$};
+  \draw[->, thick] (d0) -- (dstep);
+  \draw[->, thick] (dstep) -- (d1);
+  % input arrows
+  \draw[->, thick, yellow!50!black] (in.north) -- ($(rhs.south)+(-1.2,0)$);
+  \draw[->, thick, yellow!50!black] (in.south) -- ($(dstep.north)+(-2.6,0)$);
+  % comparison
+  \node[box, fill=red!8] (cmp) at (14.4,-3.55) {difference\\[-1pt]\footnotesize = compression only};
+  \draw[->, thick, red!60!black] (rs.east) to[out=-20, in=90] (cmp.north);
+  \draw[->, thick, red!60!black] (d1) -- (cmp);
+\end{tikzpicture}
+\caption{One time step. Top (orange): the TT pipeline. Each right-hand-side
+evaluation is a chain of MPO--MPS products truncated to bond $\chi$. The
+Runge--Kutta stages are combined and truncated. The compressed result
+$\tilde\theta_{n+1}$ is then projected onto the physical mass and variance, which
+are integrated alongside by the same stepper (green): a uniform field restores
+the mass and one scalar rescales the fluctuation. Bottom (grey): the dense twin,
+with identical inputs and the same projection but no truncation. A lossless TT
+run reproduces it to round-off.}
+\label{fig:step}
+\end{figure*}
+
+\paragraph{The equation.}
 \begin{equation}
 \partial_t \theta + \mathbf{u}\!\cdot\!\nabla\theta \;=\; \kappa\nabla^2\theta + f,
 \qquad \nabla\!\cdot\!\mathbf{u} = 0,
 \label{eq:ps}
 \end{equation}
-on a doubly periodic square. Here $\theta$ is a scalar (temperature, dye
-concentration) carried passively by a prescribed incompressible velocity
-$\mathbf{u}$: it does not react back on the flow. $\kappa$ is the molecular
-diffusivity and $f$ a large-scale source.
-
-\paragraph{Physics.} Advection stretches and folds $\theta$, cascading scalar
-variance from the injection scale down to the Batchelor scale where diffusion
-erases it. The resulting fields are strongly \emph{intermittent}: increments have
-heavy tails and flatness grows without bound as the separation shrinks, which is
-precisely the property the hybrid encoding was designed to preserve. The variance
-budget follows from Eq.~\eqref{eq:ps},
+on a doubly periodic square. Multiplying by $\theta$ and averaging gives the
+variance budget
 \begin{equation}
-\frac{d}{dt}\,\tfrac12\langle\theta^2\rangle
-\;=\; -\,\kappa\big\langle|\nabla\theta|^2\big\rangle \;+\; \langle\theta f\rangle ,
+\frac{d}{dt}\langle\theta^2\rangle
+\;=\; -\,2\kappa\big\langle|\nabla\theta|^2\big\rangle \;+\; 2\langle\theta f\rangle .
 \label{eq:budget}
 \end{equation}
-obtained as follows. Multiplying Eq.~\eqref{eq:ps} by $\theta$ and using
-$\theta\,\partial_t\theta=\partial_t(\theta^2/2)$ and
-$\theta\,\mathbf{u}\!\cdot\!\nabla\theta=\mathbf{u}\!\cdot\!\nabla(\theta^2/2)$,
+Advection does not appear. It moves variance between places and scales without
+creating or destroying any. Diffusion removes variance at the rate
+$2\kappa\langle|\nabla\theta|^2\rangle$, and the forcing supplies it. The mass,
+$\langle\theta\rangle$, changes only through the forcing,
+$d\langle\theta\rangle/dt=\langle f\rangle$, since advection and diffusion
+merely move scalar around the periodic box.
+
+\paragraph{Discretisation.} Second-order centred differences $\mathsf{D}_x$,
+$\mathsf{D}_y$ and the five-point Laplacian $\nabla_h^2$, all periodic. The
+transport term is written in skew form,
 \begin{equation}
-\partial_t\frac{\theta^2}{2}
- + \mathbf{u}\!\cdot\!\nabla\frac{\theta^2}{2}
- \;=\; \kappa\,\theta\nabla^2\theta + \theta f .
-\label{eq:budget-pointwise}
+\mathsf{A}_{\rm adv}\theta \;=\; -\tfrac12\sum_{d=x,y}\big[u_d\,\mathsf{D}_d\theta
++ \mathsf{D}_d(u_d\theta)\big].
+\label{eq:skew}
 \end{equation}
-Two rewritings turn this into a statement about the box average. First,
-incompressibility converts the transport term into a pure divergence,
-$\mathbf{u}\!\cdot\!\nabla(\theta^2/2)=\nabla\!\cdot\!(\mathbf{u}\,\theta^2/2)$,
-since the two differ by $(\theta^2/2)\nabla\!\cdot\!\mathbf{u}=0$. Second, the
-diffusive term splits by the product rule,
-$\kappa\,\theta\nabla^2\theta=\kappa\nabla\!\cdot\!(\theta\nabla\theta)
--\kappa|\nabla\theta|^2$. Collecting,
-\begin{equation}
-\partial_t\frac{\theta^2}{2}
- + \nabla\!\cdot\!\Big(\mathbf{u}\frac{\theta^2}{2}-\kappa\theta\nabla\theta\Big)
- \;=\; -\,\kappa|\nabla\theta|^2 + \theta f ,
-\label{eq:budget-flux}
-\end{equation}
-which is a local conservation law for $\theta^2/2$ with flux
-$\mathbf{u}\theta^2/2-\kappa\theta\nabla\theta$. Averaging over the periodic box
-annihilates every divergence and leaves Eq.~\eqref{eq:budget}.
+Because $\mathsf{D}_d$ is antisymmetric, $\langle\theta,\mathsf{A}_{\rm adv}\theta\rangle=0$
+exactly for \emph{any} velocity, so the semi-discrete system inherits
+Eq.~\eqref{eq:budget} exactly:
+$d\|\theta\|^2/dt = P(\theta) \equiv 2\kappa\langle\theta,\nabla_h^2\theta\rangle + 2\langle\theta,f\rangle$.
+It also conserves mass exactly, $d\langle1,\theta\rangle/dt=\langle1,f\rangle$,
+because periodic differences sum to zero and the velocity is discretely
+divergence-free.
+The one-sided (advective or conservative) forms violate this and drift in
+variance by equal and opposite amounts. The velocity is the discrete curl of a
+streamfunction, $\mathbf{u}=(\mathsf{D}_y\psi,-\mathsf{D}_x\psi)$, and is
+therefore divergence-free on the grid. Time stepping uses SSPRK3. Centred advection
+has purely imaginary eigenvalues, which makes forward Euler unstable and RK2
+weakly unstable.
 
-Three features of that result are used throughout. Advection appears only inside
-a divergence, so it \emph{redistributes} variance in space and across scales
-without creating or destroying any --- the cascade is driven by a term that is
-itself conservative. Diffusion contributes $-\kappa\langle|\nabla\theta|^2\rangle$,
-which is sign-definite, so the unforced variance is monotonically decreasing and
-the decay rate is set by how much gradient the cascade has produced rather than
-by $\kappa$ alone. And the only way to balance that loss is the production
-$\langle\theta f\rangle$, which is what the forced runs equilibrate.
+\paragraph{Truncation points.} Each right-hand-side evaluation truncates the
+intermediates $\mathsf{D}\theta$, $\mathbf{u}\odot\mathsf{D}\theta$,
+$\mathbf{u}\odot\theta$, $\mathsf{D}(\mathbf{u}\theta)$ and their sum. Each of
+the three stages is truncated after the stage combination. Truncation is a
+two-sweep SVD compression with a separate cap on the head bond. The solver runs
+single-threaded: the workload is thousands of small contractions, and extra
+threads make it up to $29\times$ slower.
 
-Note the consequence for scheme design: the \emph{nonlinear} (bilinear)
-transport term is the conservative one, and the \emph{linear} diffusive term is
-what dissipates. The same structure holds for Navier--Stokes, where
-$\mathbf{u}\!\cdot\!\nabla\mathbf{u}$ conserves kinetic energy and viscosity
-dissipates it.
+% =========================================================================
+\section{Physically consistent compression}
+\label{sec:consistency}
+% =========================================================================
 
-Discretely, Eq.~\eqref{eq:budget} holds only to the extent that the discrete
-transport operator inherits the skew-symmetry that made the term a divergence.
-This is the reason the solver uses the skew form, and the reason the variance
-histories in Fig.~\ref{fig:histphys} are evidence rather than bookkeeping: any
-variance not accounted for by $\kappa\langle|\nabla\theta|^2\rangle$ is numerical,
-and in the hybrid runs it is attributable to truncation.
+\paragraph{The problem.} A truncation projects the field onto fewer degrees of
+freedom and always removes some of its variance. Left alone, this acts as an
+extra, unphysical dissipation. The compression paper treats a single snapshot by
+rescaling the compressed field to the norm of the original (an exact global
+factor $c\ge1$, with $c^2=1.027$ at $\rho=1.31\%$). Time evolution needs the
+analogue of that rule, and the analogue must not depend on how the time step is
+computed, so that time steppers can later be swapped and compared.
 
-When $\nabla\!\cdot\!\mathbf{u}=0$ the transport term also admits the
-\emph{conservative} (flux) form
-\begin{equation}
-\mathbf{u}\!\cdot\!\nabla\theta \;=\; \nabla\!\cdot\!(\mathbf{u}\,\theta),
-\label{eq:cons}
-\end{equation}
-which is equivalent analytically but not after discretisation: the flux form
-respects the variance budget far better and is the usual choice.
-
-\subsection{Cases solved so far}
-
-Work to date has deliberately used constant-coefficient reductions of
-Eq.~\eqref{eq:ps}, because they have exactly known solutions and therefore
-isolate compression error from every other error source:
-\begin{align}
-\partial_t\theta &= \kappa\nabla^2\theta && \text{pure diffusion}\\
-\partial_t\theta + \mathbf{c}\!\cdot\!\nabla\theta &= 0 && \text{rigid translation, } \mathbf{c}\text{ constant}\\
-\partial_t\theta + \mathbf{c}\!\cdot\!\nabla\theta &= \kappa\nabla^2\theta && \text{constant-velocity advection--diffusion}
-\end{align}
-A genuine, space-dependent velocity has since been added: the steady cellular
-flow obtained from the streamfunction $\psi = \sin x \sin y$, i.e.
-$\mathbf{u} = (\sin x\cos y,\ -\cos x \sin y)$, run both decaying and weakly
-forced. The simpler choice $\mathbf{u} = (\sin y,\ \sin x)$ was tried first and
-discarded. It is a perfectly good flow physically --- its streamfunction is
-$\psi=\cos x-\cos y$ and its streamlines are closed --- but it is degenerate as
-a \emph{test}, for the following reason.
-
-Analytically the advective and conservative forms differ by
-$\theta\,\nabla\!\cdot\!\mathbf{u}$, so Eq.~\eqref{eq:cons} holds for any
-incompressible $\mathbf{u}$. After discretisation the difference is $\theta$
-times the \emph{discrete} divergence $\mathsf{D}_x u_x+\mathsf{D}_y u_y$, which
-in general does not vanish even when the continuum one does, and the two forms
-are genuinely different operators. For any velocity of the separated form
-$\mathbf{u}=(h(y),\,g(x))$ --- of which $(\sin y,\sin x)$ is the simplest
-example --- each term of that discrete divergence vanishes \emph{separately}:
-$\mathsf{D}_x u_x$ applies an $x$-stencil to a field with no $x$-dependence and
-returns exactly zero at every point, and likewise for $\mathsf{D}_y u_y$. The
-advective, conservative and skew discretisations are then literally the same
-expression. Measured at $256^2$ on the initial condition,
-$\|{\rm adv}-{\rm cons}\|_\infty/\|{\rm adv}\|_\infty = 6.0\times10^{-15}$,
-i.e.\ round-off.
-
-The cellular flow is incompressible in the weaker and more useful way. There
-$\mathsf{D}_x u_x$ and $\mathsf{D}_y u_y$ are each $O(1)$ --- both reach $1.000$
-in magnitude --- and cancel only in their sum, to $1.9\times10^{-14}$. The two
-transport forms then differ by $6.7\times10^{-4}$ in relative $\infty$-norm, an
-$O(\Delta x^2)$ discretisation difference that the skew form averages. Only with
-such a velocity can a run check that the conservative form is implemented
-correctly, measure whether the skew form conserves $\langle\theta^2\rangle$
-better than the advective one, or detect a solver that silently applies the
-wrong form.
-
-A frozen DNS velocity snapshot has since been added as a third case. The
-streamfunction is recovered from the stored $v_x,v_y$ at $4096^2$ by inverting
-the vorticity spectrally, coarsened to the target grid, and differentiated with
-the solver's own MPOs. Its rank behaviour differs sharply from the cellular
-flow: at $L=9$ and $\epsilon=10^{-6}$ the streamfunction saturates the geometric
-bond bound and its tensor train costs more parameters than the dense field
-($\rho=1.33$, and $2.32$ at $L=10$). It becomes compressible only at much looser
-tolerance, $\epsilon=10^{-2}$ giving bond $21$ at $\rho=0.084$ for a $1.7\%$ error
-in $\psi$. Runs with the DNS velocity therefore use a truncated velocity field,
-which is a modelling choice recorded in each run file; the derived velocity
-carries bond $34$ against $4$ for the cellular flow.
-
-The velocity is built from $\psi$ with the solver's own stencils,
-$\mathbf{u} = (\mathsf{D}_y\psi,\ -\mathsf{D}_x\psi)$, which makes it
-divergence-free to round-off at the \emph{discrete} level since $\mathsf{D}_x$
-and $\mathsf{D}_y$ act on different axes and commute exactly. (For separable
-trigonometric flows analytic sampling happens to be discretely divergence-free
-too; the streamfunction route is the general guarantee, not an improvement in
-that special case.)
-
-\subsection{Standard ways to solve these}
-
-\begin{itemize}
-\item \textbf{Pseudo-spectral} is the reference method for periodic 2D
-      turbulence: derivatives are exact in Fourier space, the nonlinear product
-      is formed in physical space with $2/3$ dealiasing, and diffusion is handled
-      by an integrating factor or exponential time differencing so it imposes no
-      timestep restriction. This is how the DNS database underlying the paper was
-      produced.
-\item \textbf{Finite difference / finite volume} with upwind or WENO
-      reconstruction for the transport term, central stencils for diffusion, and
-      SSP Runge--Kutta in time. Cheaper per degree of freedom, more dissipative,
-      and much easier to express as a local operator.
-\item \textbf{Stiffness.} Explicit diffusion requires
-      $\Delta t \le \Delta x^2/4\kappa$ in 2D, which becomes punishing on fine
-      grids; implicit or exponential treatment of the diffusive term is standard.
-\end{itemize}
-
-\paragraph{What we do instead.} The field is stored as a hybrid TT over the
-interleaved (Morton) bit ordering, and every spatial operator is a
-matrix-product operator acting on it. Stencils are finite differences, so the
-semi-discrete system is
-\begin{equation}
-\frac{d\boldsymbol{\theta}}{dt} \;=\; \mathsf{A}\,\boldsymbol{\theta},
-\qquad
-\mathsf{A} \;=\; -c_x\mathsf{D}_x - c_y\mathsf{D}_y + \kappa\,\mathsf{L},
-\end{equation}
-with $\mathsf{A}$ collapsing to a \emph{single} low-bond MPO in the
-constant-coefficient case. Time stepping is explicit Runge--Kutta, and the state
-is recompressed after every stage. Compression is the entire source of novelty
-and the entire source of risk.
-
-\section{The encoding}
-
-Writing the hybrid ansatz out,
-\begin{equation}
-\theta(x,y) \;=\; \sum_{\alpha=1}^{\chi} A^{0}[B,\alpha]\;\Phi_\alpha(\text{fine coordinates}),
-\end{equation}
-with $B$ the coarse-block label carried by the dense head and $\Phi_\alpha$ the
-fine-scale shape functions carried by the compressed tail. So the hybrid TT is a
-\textbf{block-wise reduced basis with a globally shared dictionary}. Two
-consequences:
-\begin{itemize}
-\item The coarse-grained field is a linear functional of the head alone, so
-      ``the large scales live in the head'' is literally true.
-\item The large scales carry no rank error. For advection-dominated dynamics this
-      is the central argument for the encoding: exact large-scale transport with
-      rank-compressed small-scale structure.
-\item The same framing predicts the \emph{seam}: neighbouring blocks get
-      independent amplitude vectors and nothing enforces continuity across a
-      block boundary.
-\end{itemize}
-
-\paragraph{Conventions.} $L$ = bits per axis (grid $2^L\times2^L$); $2L$ total
-interleaved legs, even legs carrying rows ($y$) and odd legs columns ($x$); $N$ =
-legs held by the dense head, so the head spans $2^{N/2}\times2^{N/2}$ coarse
-blocks and the seam period is $2^{L-N/2}$ --- \emph{not} $2^{N/2}$, which
-coincides only at $N=L$.
-
-\section{What was built}
-
-All of it sits on top of \code{tensnet} via its public API. No \code{tensnet}
-source is modified, and --- deliberately stricter --- no \code{tensnet} global
-state is read or written, since a wrong global would not raise but would silently
-produce wrong physics.
-
-\begin{itemize}
-\item \code{hybrid\_ops.py} --- hybrid TT algebra: construction and contraction,
-      truncated SVD with a genuine amplitude tolerance, two-sweep compression
-      with \emph{per-bond} caps, exact arithmetic (add / scale / axpy /
-      Hadamard), MPO application by un-fusing the head, application through an
-      explicit fused $2^N\times2^N$ head operator, rank-1 mass projection, and
-      pointwise evaluation without contracting the TT.
-\item \code{hybrid\_operators.py} --- named stencils, derivative and Laplacian
-      MPOs, exact translation, the combined advection--diffusion operator, exact
-      MPO algebra, and the isotropic seam smoother.
-\item \code{hybrid\_evolve.py} --- Euler / RK2 / SSPRK3 / RK4, a truncation
-      policy with optional loss accounting, a stable-timestep helper enforcing
-      both the advective and diffusive limits, variable-coefficient transport in
-      advective / conservative / skew form with optional forcing, velocity from a
-      streamfunction, dense finite-difference and analytic spectral references,
-      and diagnostics including a variance-budget measure of numerical
-      dissipation.
-\item Four test suites, $\sim$117 assertions, all against dense references.
-\end{itemize}
-
-All of this lives in \code{time\_evolution/}, deliberately separated from the
-paper material in the repository root. The dependency runs one way only: these
-modules read \code{config.py} and \code{hybrid\_MPS.py} from the root, and
-nothing in the root imports from them, so the paper figures reproduce without
-this directory.
-
-The seam smoother is the isotropic repair --- the \code{\_int64\_xy} treatment,
-not the $x$-only one. With $P_{x,y}$ the seam projectors, $Q=I-P$, and $A_{x,y}$
-the periodic two-neighbour averages,
-\begin{equation}
-S \;=\; Q_x Q_y \;+\; P_x Q_y A_x \;+\; Q_x P_y A_y \;+\; P_x P_y \tfrac{1}{2}(A_x+A_y).
-\end{equation}
-
-\section{What has been checked}
-
-Everything below is verified numerically against a dense reference, not asserted
-from reading source.
-
-\begin{itemize}
-\item Lossless hybrid round trip; agreement between our constructor and the
-      legacy one; the index layout and seam geometry.
-\item All arithmetic is exact, with no hidden truncation.
-\item Compression: lossless at full rank, monotone in the cap, head physical
-      dimension preserved, head bond capped independently of the tail bonds, and
-      norm genuinely lost when truncating.
-\item Every operator --- first and second derivatives at 2nd and 4th order, upwind
-      stencils, Laplacian, translation, seam smoother --- against dense, on both
-      axes, at several $(L,N)$.
-\item Operator composition, and agreement between composing then applying versus
-      applying twice.
-\item The seam smoother reproduces the dense reference implementation exactly, is
-      isotropic under transposition, and touches only seam lines.
-\item All four time steppers reproduce their dense counterparts.
-\item The fused-head and un-fused-head paths agree to round-off, both as single
-      applications and over multi-step evolutions.
-\item Pointwise evaluation agrees with the dense field.
-\item The variable-coefficient right-hand side against dense, for all three
-      transport forms, with and without diffusion and forcing.
-\item Variance conservation of the three transport forms, at several
-      resolutions and timestep sizes.
-\end{itemize}
-
-\paragraph{Verified \code{tensnet} traps.} None of these raise; all silently
-corrupt. The global 2D architecture defaults to the non-interleaved layout;
-\code{get\_diff\_mpo} defaults to 8th-order stencils; MPS addition and
-multiplication silently compress at a global $l_2$ tolerance; \code{tt.svd}
-treats its \code{eps} as a squared-energy fraction, so the achievable amplitude
-error saturates around $\sqrt{\epsilon}$; \code{tt.svd} renormalises singular
-values after truncation by default; \code{shift\_mpo} has inverted flags and is
-non-periodic; \code{MPO.\_\_matmul\_\_} and \code{MPO.contract()} cannot handle
-hybrid shapes at all.
-
-\section{Histories}
-
-Figures~\ref{fig:histphys} and~\ref{fig:histcomp} show the quantities that are
-tracked at every sample of every run: the first what the flow does to the
-scalar, the second what the encoding does to it over the same window. All three
-flows appear in the first so that a statement made for one can be checked
-against the others; the second is drawn at one resolution and head size
-($L=10$, $N=10$) with the bond cap swept, since that is the only control.
-
-\begin{figure*}[t]
-\centering
-\includegraphics[width=\linewidth]{figures/history_physical.png}
-\caption{Physical histories, all from the dense reference. (a) Variance:
-monotone decay without forcing; with it, a slow approach to the steady value
-$0.4804$, still $6\%$ away at $T=60$. (b) The budget of
-Eq.~\eqref{eq:budget}, formed numerically: the unforced flows close it to within
-the line width at every sample, and the forced case approaches closure as the
-steady state is approached (it is evaluated only at the stored snapshots, since the
-production $\langle\theta f\rangle$ is not a recorded diagnostic). (c) Where the
-variance sits: centroid $\bar k$ and the $95\%$ wavenumber $k_{95}$ both move to
-small scale and then stall, which is the cascade reaching $\ell_B$. (d) Gradient
-flatness rises well above the Gaussian value of $3$ as filaments form. (e) The
-variance spectrum filling in over time. (f) Scalar dissipation, peaking when the
-cascade arrives at $\ell_B$.}
-\label{fig:histphys}
-\end{figure*}
-
-\begin{figure*}[t]
-\centering
-\includegraphics[width=\linewidth]{figures/history_compression.png}
-\caption{Compression histories at $L=10$, $N=10$, bond cap swept. (a) The error
-rises while the cascade is generating scales and then saturates; it does not
-drift. (b) The same curves against the error of merely representing the exact
-field at that budget, which they track a bounded factor above. (c) Rank: the
-intrinsic rank of the exact solution at three probe accuracies (solid) plateaus
-far below the geometric bound, while the rank the solver carries (dotted) sits
-at its cap throughout, $\epsilon$ being off. (d) Stored parameters, carried
-versus needed. (e) The variance error, two to four orders of magnitude below the
-pointwise error at the same budget. (f) Mass drift: truncation is not
-mass-conserving and no projection is applied, so $|\langle\theta\rangle|$ grows
-by an amount set by the budget, against $10^{-15}$ for the dense reference.}
-\label{fig:histcomp}
-\end{figure*}
-
-\section{Findings and remarks}
-
-\begin{itemize}
-\item \textbf{The rank saturates in a genuine cascade.} This is the central
-      result. In the cellular flow the intrinsic rank of the \emph{dense}
-      solution --- a property of the physics, not of the scheme --- rises during the
-      initial stretching and then plateaus for the rest of the run rather than
-      growing without bound. An adaptive-tolerance TT tracks it a few units
-      below throughout, with the error flat over a thousand steps. Constant-velocity
-      transport could not test this; a real cascade can, and the encoding holds.
-\item \textbf{Error saturates at fixed rank too}, at every bond dimension
-      tried, reproducing what was already seen for pure translation.
-\item \textbf{Bulk statistics survive rank starvation far better than
-      pointwise accuracy.} At a third of the rank the field actually needs, the
-      pointwise error is a few percent while the variance still tracks the
-      reference to about one part in a thousand. Encouraging for a
-      statistics-focused study, and worth testing directly against the paper's
-      diagnostics.
-\item \textbf{Numerical dissipation is negligible against molecular
-      dissipation} --- a fraction of a percent of it, even at a third of the
-      required rank. On this evidence plain truncation is adequate and a
-      norm-conserving integrator is not needed, which retires the main open
-      question about the scheme.
-\item \textbf{The skew-symmetric transport form is essential.} The advective
-      and conservative discretisations drift in variance by equal and opposite
-      amounts, and their average is conserved to machine zero --- at every
-      resolution, timestep and velocity construction tested. The drift of the
-      one-sided forms grows sharply as the grid coarsens or the run lengthens,
-      so it is not a small effect.
-\item \textbf{Centred advection constrains the time scheme.} The spatial
-      operator has purely imaginary eigenvalues, so forward Euler is outright
-      unstable and RK2 is \emph{latently} unstable: its amplification factor on
-      the imaginary axis exceeds one, which stays invisible on a smooth field and
-      would bite precisely when the cascade generates high-wavenumber content.
-      SSPRK3 or RK4 is required.
-\item \textbf{Performance came almost entirely from one change.} Compression
-      sweeps dominate the cost, and on the matrix shapes they produce torch's CPU
-      LAPACK path is several times slower than scipy's; switching the sweeps gave
-      roughly an order of magnitude end to end. Thread count mattered before the
-      switch and does not after. Two further optimisations that flop counting
-      predicted would help --- replacing an einsum with a matmul, and cutting the
-      number of truncations per step --- both measured within noise, because
-      fewer-but-larger compressions offset the reduced call count.
-\item \textbf{The low-rank structure survives advection.} A one-cell translation
-      inflates the state rank by of order ten percent, transiently, and returns it
-      \emph{exactly} to baseline whenever the shift is a whole number of coarse
-      blocks. Verified at two different $(L,N)$. An adaptive-tolerance scheme
-      tracks the intrinsic rank of the exact solution to within one or two, so
-      the method accumulates essentially no spurious rank.
-\item \textbf{Truncation error saturates rather than compounding.} Under a hard
-      rank cap over hundreds of advection steps the error stops growing and the
-      field settles onto a representable state that then simply translates. This
-      was the principal risk identified at the outset and it did not materialise
-      for constant-velocity transport.
-\item \textbf{Lossy truncation per step is a property of the cap, not of
-      advection.} It appears when the rank cap sits below the field's intrinsic
-      rank --- which is exactly the fixed-compression-ratio regime the study works
-      in, and a legitimate choice, but the loss should be attributed correctly.
-\item \textbf{Rank capping and tolerance capping answer different questions.} A
-      cap fixes the compression ratio and lets error float; a tolerance fixes
-      error and lets rank float, revealing what the physics actually demands.
-      Both are supported and both are needed.
-\item \textbf{The seam smoother should not run inside the time loop.} It is a
-      low-pass filter and is not idempotent, so iterating it is diffusion. It
-      never beat leaving it off. The \emph{severity} is configuration dependent
-      --- it scales with the fraction of cells on seam lines, $\approx 2^{1-L+N/2}$
-      --- so the earlier dramatic figures came from an unrepresentatively small
-      block width. The seam is an artifact of the representation, so its repair
-      belongs on the output being analysed, not on the state being evolved.
-\item \textbf{Mass conservation is cheap and worth having.} Truncation drifts the
-      mean; a rank-1 constant restores it to round-off at no accuracy cost,
-      provided it is applied \emph{after} truncation. Unlike rescaling the $l_2$
-      norm it does not move variance between scales.
-\item \textbf{Do not renormalise after truncation.} Truncation is an orthogonal
-      projection and losing norm is a theorem, not a defect. Rescaling puts the
-      discarded small-scale variance back into the retained large scales --- a
-      spurious inverse cascade --- and, worse, disables the very diagnostic that
-      detects under-resolution.
-\item \textbf{Consequence for the published data.} Because rescaling does not
-      change the retained subspaces, the legacy pipeline's output is exactly
-      plain truncation times a \emph{global scalar} that tends to unity as the
-      bond dimension grows. Every scale-invariant statistic --- flatness,
-      normalised structure-function ratios, normalised increment PDFs --- is
-      therefore unchanged; only the absolute level of $E(k)$ can have moved. This
-      still needs confirming on the real DNS snapshots.
-\item \textbf{The fused head does not scale.} Single-stencil operators have very
-      sparse fused heads, but operators that are sums of terms --- the Laplacian,
-      the seam smoother --- have essentially dense ones, so sparsity buys nothing
-      for exactly the operators one most wants. It is modestly faster at small
-      $N$ but becomes infeasible in memory at production $N$; the un-fusing path,
-      whose cost carries no $4^N$ term, is the one that scales.
-\item \textbf{The cascade run was decaying, not statistically steady.} The
-      forcing amplitude was set to balance the \emph{initial} dissipation, but
-      once the cascade steepens gradients the dissipation grows by orders of
-      magnitude, so the field decays anyway. That the rank plateau holds while
-      the variance falls by two orders is arguably a stronger statement, but the
-      statistically-steady state is the regime the paper's statistics describe.
-      It has since been reached by solving for it directly; see the forced
-      runs below.
-\item \textbf{Traps for the experimenter.} Rank experiments need a field
-      whose rank has room to move: a multiscale field is full rank and the
-      measurement merely saturates the chain geometry. A total error that falls
-      \emph{below} the pure finite-difference floor is coincidental error
-      cancellation, not an improvement. A diagnostic that aggregates truncation
-      losses across a whole right-hand side does not measure dissipation of the
-      state. And a transport test flow must be genuinely two-dimensional, or the
-      discretisation forms it is meant to separate coincide identically.
-\end{itemize}
-
-\paragraph{The hybrid advantage survives evolution, and is a factor of about
-two in parameters.} Benchmarked against a standard tensor train (the $N=0$ case
-of the same encoder, verified to reproduce \code{tt.vector\_to\_mps} bond for
-bond) at four resolutions from $256^2$ to $2048^2$: at a fixed target accuracy
-the hybrid encoding needs $1.8$--$2.5$ times fewer parameters, with no trend in
-resolution. The useful head sizes are $N\simeq L$, i.e.\ half the bits of each
-axis, and $N\in\{L-2,L,L+2\}$ brackets the optimum everywhere measured. Full
-tables are in the companion report \code{report\_vs\_standard.pdf}.
-
-\paragraph{Representation error predicts evolution error.} Across four
-resolutions, five head sizes and five bond caps, the error made in evolving a
-field lies within a factor $1.5$--$25$ of the error of merely compressing the
-same field at the same budget, with most points below $5$. Measuring the
-ordering in $N$ and the scaling in $L$ by compression therefore costs minutes
-where integration costs core-days.
-
-\paragraph{The published compressed fields are plain truncation times a global
-scalar, confirmed on the data.} \code{tt.svd} defaults to
-\code{renormalize=True}, which rescales the kept singular values at every split.
-On \code{theta.00059} at $4096^2$ the stored hybrid fields equal the plain
-rank-truncated field times one scalar $c$ to $1.2$--$3.5\times10^{-14}$. The
-norm is preserved exactly, $E(1)$ shifts by exactly $c^2$ --- $+2.7\%$ at
-$\rho=0.014$, falling to $+0.04\%$ at $\rho=0.64$ --- and the gradient flatness
-ratio is $1.0000$, so every scale-invariant statistic is unaffected.
-
-\paragraph{The solver must run single-threaded.} A step is thousands of small
-contractions and SVDs, none large enough to amortise thread dispatch. On a
-256-core node, four threads instead of one measured the hot einsum in
-\code{\_apply\_core} $43\times$ slower and a whole step $29\times$ slower. The
-earlier observation that thread count stopped mattering after the move to LAPACK
-understates it: on many-core hardware extra threads are actively harmful.
-
-\paragraph{The forced steady state is a fixed point, reached on a time
-$\propto1/\kappa$.} With $\mathbf{u}$ and $f$ steady the forced problem is
-linear, so its long-time state solves $\mathsf{A}\theta_{ss}=-f$ with
-$\mathsf{A}$ the solver's own discrete operator. Solved directly, it gives
-$\langle\theta^2\rangle_{ss}=0.4804$, $0.4956$ and $0.4975$ at $256^2$,
-$512^2$ and $1024^2$. The dense solver approaches it exponentially with
-e-folding time $\tau=54$, $207$ and $806$, i.e.\ $\kappa\tau\simeq0.26$ at every
-resolution (Fig.~\ref{fig:relax}). The earlier estimate $1/(\kappa k_f^2)=12.5$
-at $k_f=4$ was four times too short, so the $256^2$ forced runs, stopped at
-$T=60$, end $6.4\%$ above the steady variance: they sample a late transient, not
-the steady state. Their comparisons against the dense reference stand.
-
-\begin{figure}[h]
-\centering
-\includegraphics[width=\linewidth]{figures/forced_relaxation.png}
-\caption{Dense approach to the forced steady state against $t$ and against
-$\kappa t$; the tails collapse in units of $1/\kappa$.}
-\label{fig:relax}
-\end{figure}
-
-\paragraph{The hybrid encoding holds the steady state at $512^2$ and $1024^2$;
-the standard one does not at low $\chi$.} A run to steady state at $1024^2$
-would need $\sim2\times10^6$ steps, $2$--$45$ days for a hybrid run, so each run
-instead starts from $\theta_{ss}$, beside a dense reference that then stays put
-to $10^{-14}$. Any departure is truncation fed back through the dynamics. With
-$N\ge8$ and $\chi\ge16$ the error levels off within about $20$ time units at
-$1.1$--$3.8$ times the representation error at $512^2$ and $2.6$--$7.7$ times
-at $1024^2$, and the steady variance is held to $2\times10^{-4}$ or better. The
-standard encoding ($N=0$) at $1024^2$ with $\chi\le16$ loses the state: $L_2$
-error $0.65$--$1.24$, variance off by $18$--$58\%$, and at $\chi=16$ an error
-still growing exponentially at $T=200$. At fixed accuracy the hybrid encoding
-needs $1.4$--$1.5$ times fewer parameters at $512^2$ and $2.5$--$2.8$ at
-$1024^2$, at $N=8$ (Fig.~\ref{fig:hires}). From the initial condition at $512^2$
-the transient is much harder to track, with evolution errors $45$--$1400$ times
-the representation error at $\chi\le16$ for most head sizes.
-
-\begin{figure*}[t]
-\centering
-\includegraphics[width=\linewidth]{figures/forced_hires.png}
-\caption{Forced runs held at the steady state, $512^2$ (top) and $1024^2$
-(bottom). Left: $L_2$ error at $t=T$ against $\rho$, evolved (circles) and
-representation (squares). Centre: steady-variance error. Right: error histories
-at $\chi=16$, evolved (solid) and representation (dashed).}
-\label{fig:hires}
-\end{figure*}
-
-\paragraph{The rank plateau survives both a sustained forcing and a turbulent
-velocity.} In the forced cellular run at $256^2$ the intrinsic rank rises from
-$12$ to a peak of $56$ and holds at $41.9\pm0.6$ over $40\le t\le60$, against
-$38$ for the exact steady state and a geometric bound of $256$; the exact steady
-states at $512^2$ and $1024^2$ need $\chi=28$ and $33$ at $\epsilon=10^{-6}$
-($N=10$). Advected by a frozen DNS velocity snapshot at $512^2$ the rank rises
-within a tenth of a time unit and holds at $315\pm1.1$ at $\epsilon=10^{-6}$
-($61\%$ of the bound), $154$ at $10^{-4}$ and $34$ at $10^{-2}$, flat for the
-remaining $22$ eddy turnover times.
-
-\paragraph{With a turbulent velocity the evolution error stops being monotone in
-the bond cap.} In every cellular run, decaying or forced, the error falls
-monotonically as $\chi$ grows. Under the DNS velocity it does not: at $N=10$ the
-$L_2$ error runs $7.7\times10^{-2}$, $1.5\times10^{-1}$, $2.9\times10^{-2}$,
-$1.9\times10^{-3}$ for $\chi=16,24,32,48$, and the variance error is
-non-monotone at $N=8$, $10$ and $12$. The representation error at the same
-budgets remains monotone in every case, so the effect belongs to the dynamics
-rather than to the encoding. The consequence is practical: the rate--distortion
-framing used for the cellular benchmark does not transfer directly, and a single
-$(N,\chi)$ pair cannot be ranked by its budget alone. The ratio of evolution to
-representation error widens correspondingly, from $1.5$--$25$ for the cellular
-flow to $1.5$--$233$ here.
-
-\section{Corrections to earlier statements}
-
-Recorded because the reasoning matters more than the conclusions:
-\begin{itemize}
-\item ``Translation is rank-preserving'' (wrong), then ``translation is not
-      rank-preserving, so every step must be lossy'' (also wrong, over-corrected).
-      The measured behaviour is the first bullet of the previous section.
-\item ``Apply the seam smoother once per step, inside the loop.'' It is harmful
-      at every cadence tested.
-\item ``The nonlinear term is the norm-changing one.'' For a passive scalar with
-      $\nabla\!\cdot\!\mathbf{u}=0$ the transport term conserves variance exactly
-      and the linear diffusive term dissipates; see Eq.~\eqref{eq:budget}.
-\item \textbf{The truncation-loss diagnostic was wrong by four orders of
-      magnitude}, and in the alarming direction: it reported numerical
-      dissipation at roughly seventeen times the molecular value when the true
-      figure is about two thousandths of it. It summed every compression,
-      including the dozen or so per right-hand-side evaluation performed on
-      intermediates whose norms are those of the right-hand side rather than of
-      $\theta$. Caught only because it contradicted the variance history, which
-      tracked the reference closely. Replaced by a variance-budget measure, with
-      a warning left on the raw accumulator.
-\item \textbf{Two performance predictions from flop counting, both wrong.}
-      Replacing an einsum with a matmul and cutting the truncation count per step
-      were each expected to help and each measured within noise. The actual win
-      was in a place flop counting does not look at all: the LAPACK backend.
-      Relatedly, the compression granularity inside the transport term was
-      argued in both directions before being settled by measurement.
-\item \textbf{Two wrong diagnoses of a changed variance drift.} A discrepancy
-      against an earlier measurement was attributed first to the timestep and
-      then to the velocity construction; both were ruled out by direct test, and
-      the cause was the grid resolution together with the run length implied by a
-      fixed step count.
-\end{itemize}
-
-\paragraph{How the hybrid advantage was quoted.} It was first reported as
-``$7.6\times$, $21\times$, $90\times$ at $\rho=0.2$, growing with resolution''.
-That is the error ratio at a fixed budget, a vertical cut through the
-rate--distortion curve, and it is inflated by the steepness of those curves,
-increasingly so at larger $L$. Read as the budget needed for a fixed accuracy
-the saving is $1.8$--$2.5$ and flat in $L$. Both describe the same pair of
-curves; the budget ratio is the one that answers how many parameters the head
-buys.
-
-\paragraph{Reachability of $4096^2$.} It was described as out of reach. That
-assumed a fixed compression ratio, which requires $\chi\sim2^L$. For a fixed
-\emph{accuracy} the measured requirement is $\chi\sim2^{0.34L}$, nearly flat
-($\chi = 6, 12, 16, 12$ for $L=7\ldots10$ at $L_2=10^{-2}$), and a step at
-$4096^2$ was measured at $7.3$~h for $\chi=24$ with a peak resident set of
-1.4~GB.
-
-\section{Status and next steps}
-
-\paragraph{Done.} The validated baseline is committed and separated from the
-paper material. The cellular-flow cascade answers the central question: the
-intrinsic rank rises as fine scales are generated and then saturates, flat for
-twelve time units while the variance decays sevenfold, at ranks well below the
-geometric bound. Truncation dissipation is negligible against molecular
-diffusion, so the conditional TDVP upgrade remains unwarranted. Compression was
-profiled and improved by about an order of magnitude, and the whole campaign now
-runs as Slurm arrays. The hybrid encoding has been benchmarked against a
-standard tensor train at four resolutions (companion report
-\code{report\_vs\_standard.pdf}), and the deferred renormalisation check has
-been settled on the published data. The forced steady state has been solved
-for directly at three resolutions, and the hybrid encoding holds it at $512^2$
-and $1024^2$ where the standard encoding at low $\chi$ does not.
-
+\begin{keybox}{The rule (adopted 25 Nov 2026)}
+Consistency is defined on the \emph{update}, not on individual truncations.
 \begin{enumerate}[leftmargin=*]
-\item \textbf{The DNS-velocity ladder}, at $512^2$ with a frozen velocity
-      snapshot. The decisive case: the cellular flow is integrable and its
-      scalar spectrum is steep, $E_\theta\sim k^{-4.9}$, so it is a weak proxy
-      for turbulence, and the measured hybrid advantage drops from $5$--$24$ on
-      that field to $1.2$ on random-phase $k^{-5/3}$ fields. \emph{Settles:}
-      what the factor of two becomes on a realistic field, and whether the rank
-      still saturates when the straining is genuinely turbulent.
+\item Integrate the physical budgets of the two invariants alongside the field,
+      with the same time stepper (its stages and weights): the mass,
+      $dM/dt=\langle1,f\rangle$, and the variance, $dV/dt=P(\theta)$.
+\item Project the compressed update $\tilde\theta_{n+1}$ onto them: set its mean
+      to $M_{n+1}$ by adding a uniform field, and rescale its fluctuation by one
+      scalar so that $\|\theta_{n+1}\|^2 = V_{n+1}$. The rescaling is the paper's
+      operation, with the target set by the physics. The uniform field is a
+      rank-1 TT, so the state carries bond $\chi+1$, counted in $\rho$.
+\item Leave every truncation inside the update plain: right-hand-side
+      intermediates, Runge--Kutta stages, and the vectors of an implicit solver.
+      They are part of how the update is computed, and step 2 removes their net
+      effect on mass and variance.
+\item Apply the same rule to the dense twin, so that the two differ only by
+      compression.
+\end{enumerate}
+Mass is then conserved exactly, and the variance changes only through diffusion
+and forcing, at the accuracy of the time stepper. Spectra, flatness and PDFs are
+left free: they are what the compression changes and what we measure.
+\end{keybox}
 
-\item \textbf{The forced steady state}, now done at $512^2$ and $1024^2$ from
-      the exact steady state. Four $1024^2$ runs whose error was still growing
-      at $T=200$ ($N=0$, $\chi=16,24$; $N=12$, $\chi=12,16$) are being extended
-      to $T=600$; they will fix whether the standard encoding at $\chi=24$ also
-      loses the state, and with it the budget saving at $1024^2$, now a lower
-      bound.
+\paragraph{Why the right-hand-side truncations are not rescaled individually.}
+The right-hand side $R=d\theta/dt$ is a rate. Truncating it changes the variance
+only through the component of the truncation error $e=T(R)-R$ along $\theta$,
+since the variance rate is $2\langle\theta,R\rangle$. Matching the norm of $T(R)$
+to that of $R$ does not touch this component. What it does is multiply the whole
+term by $c\ge1$, which amounts to multiplying the velocity and the diffusivity by
+$c$ for that stage. For the standard TT at $\chi=16$ on the Kraichnan flow, the
+factors compound to an effective velocity $1.06\,\mathbf{u}$. Rescaling every
+truncation would therefore change the equation being solved. Rescaling the
+update to the integrated budget leaves the equation intact and corrects all
+truncations at once.
 
-\item \textbf{The production geometry} ($4096^2$), held rather than blocked.
-      A step costs $7.3$~h at $\chi=24$ and the shared dense-reference cache is
-      written and verified bit-identical; what is missing is a reason to spend
-      the three days, which the two runs above may supply.
+\paragraph{What the rule guarantees, and what it does not.}
+\begin{itemize}
+\item The mass is conserved to round-off, at every $\chi$. Without diffusion or
+      forcing the variance is conserved exactly too.
+\item The TT field dissipates only through $\kappa\|\nabla_h\theta_{\rm TT}\|^2$,
+      the physical dissipation of its own gradients. If compression removes
+      gradients, the TT dissipates less and its variance settles higher; if it
+      creates spurious ones, the TT dissipates more. Either is a physical
+      consequence of the representation, and the statistics measure it.
+\item The variance that plain truncation would have removed is still recorded:
+      $|s-1|$ of every rescaling $s$ is logged. The rescaling keeps the
+      under-resolution diagnostic.
+\item The shape of the field is not corrected. Pathwise error and all
+      scale-dependent statistics remain the measure of compression.
+\end{itemize}
 
-\item \textbf{2D Navier--Stokes in vorticity form.} Reuses the whole stack apart
-      from the Poisson inversion recovering $\mathbf{u}$ from $\omega$, and makes
-      the transport term genuinely nonlinear, with two quadratic invariants that
-      truncation will damage at different rates.
+\paragraph{Details for SSPRK3.} The stage values are $Y_1=\theta_n$,
+$Y_2=\theta_n+\Delta t\,R(\theta_n)$ and
+$Y_3=\tfrac34\theta_n+\tfrac14(Y_2+\Delta t\,R(Y_2))$, with weights
+$b=(\tfrac16,\tfrac16,\tfrac23)$, so
+\begin{equation}
+V_{n+1} = \|\theta_n\|^2 + \Delta t\Big[\tfrac16 P(Y_1)+\tfrac16 P(Y_2)+\tfrac23 P(Y_3)\Big],
+\qquad
+M_{n+1} = \langle1,\theta_n\rangle + \Delta t\,\langle1,f\rangle .
+\label{eq:rescale}
+\end{equation}
+With $n^2$ grid points, $m=M_{n+1}/n^2$ the target mean and $\tilde m$ the mean of
+$\tilde\theta_{n+1}$, the projected update is
+\begin{equation}
+\theta_{n+1} = m\,\mathbf{1} + s\,\big(\tilde\theta_{n+1}-\tilde m\,\mathbf{1}\big),
+\qquad
+s^2=\frac{V_{n+1}-n^2m^2}{\|\tilde\theta_{n+1}-\tilde m\,\mathbf{1}\|^2}.
+\label{eq:project}
+\end{equation}
+$P$ needs one Laplacian MPO application and one inner product per stage, and the
+mass one contraction with the all-ones vector, all exact and cheap next to the
+truncations. A forcing increment added between steps (Kraichnan forcing) uses its
+exact identities, $\langle1,\theta+f\rangle=\langle1,\theta\rangle+\langle1,f\rangle$
+and $\|\theta+f\|^2=\|\theta\|^2+2\langle\theta,f\rangle+\|f\|^2$. The initial
+compression is projected onto the mass and norm of the initial field.
 
-\item \textbf{Conditional: implicit stepping, with variational or sketched
-      products.} The timestep is CFL-limited and an implicit scheme would remove
-      that restriction, at which point AMEn stops being an optimisation of the
-      MPO--MPS product and becomes the enabling solver for the linear system.
-      Sketched products suit the many-small-SVD shape of this workload but
-      replace a certified singular-value tail with a probabilistic bound, which
-      the present methodology relies on. Neither is indicated while the explicit
-      solver with SVD truncation is still producing results.
+\paragraph{Why mass is corrected with a uniform field.} A truncation does not
+preserve the mean, and a rescaling only multiplies it by $s$. Adding the constant
+$(m-s\tilde m)\mathbf{1}$ restores it exactly and is the one correction that
+changes no increment, no structure function and no spectral coefficient away
+from $k=0$. Its cost is one extra bond, about $1/\chi$ more parameters ($6\%$ at
+$\chi=16$, $1\%$ at $\chi=96$), included in $\rho$. A correction inside the
+existing bond dimension, through the head alone, would be exactly uniform only if
+the tail could represent a constant within each block.
+
+\paragraph{Other time steppers.} Every stepper has a discrete variance identity
+for its exact update. Table~\ref{tab:identities} gives three. For implicit methods
+the identity involves the new state; rescaling $y\to s\,y$ turns it into a
+quadratic equation for $s$. Crank--Nicolson is special: its identity is the
+physical budget itself, with no numerical damping. It is the natural partner of
+this rule if we move to implicit stepping.
+
+\begin{table}[h]
+\caption{Variance identity of the exact update for three steppers, with
+$\mathsf{A}$ the semi-discrete operator and forcing omitted; in skew form
+$\langle x,\mathsf{A}x\rangle=\kappa\langle x,\nabla_h^2x\rangle$.}
+\label{tab:identities}
+\begin{ruledtabular}
+\begin{tabular}{ll}
+Stepper & Identity of the exact update $y$ from $\theta$\\
+\hline
+Explicit RK & budget integrated with the stage weights, Eq.~\eqref{eq:rescale}; differs from the scheme by $O(\Delta t^4)$\\
+Backward Euler & $\|y\|^2-\|\theta\|^2+\|y-\theta\|^2 = 2\Delta t\,\langle y,\mathsf{A}y\rangle$ \quad (extra numerical damping)\\
+Crank--Nicolson & $\|y\|^2-\|\theta\|^2 = 2\Delta t\,\langle m,\mathsf{A}m\rangle$, \ $m=\tfrac12(y+\theta)$ \quad (no numerical damping)\\
+\end{tabular}
+\end{ruledtabular}
+\end{table}
+
+\paragraph{How methods are compared.} Each comparison isolates one layer:
+\begin{itemize}
+\item TT against the dense twin with the same stepper: the compression error.
+\item Dense against dense across steppers: the time-discretisation error.
+\item The budget residual of every run: the consistency check, which should sit
+      at round-off or at the solver tolerance.
+\end{itemize}
+
+\paragraph{Verification.} All checks run on the cluster against dense
+references.
+\begin{itemize}
+\item $\langle\theta,\mathsf{A}_{\rm adv}\theta\rangle$ vanishes to $10^{-17}$ for
+      a Kraichnan velocity.
+\item The TT production $P$ matches the dense value to $10^{-14}$.
+\item The SSPRK3 quadrature of the budget differs from the dense scheme's own
+      variance change by $O(\Delta t^4)$ (measured ratio $15.9$ on halving
+      $\Delta t$).
+\item A compressed step lands on both budgets to $10^{-16}$, and the mass of
+      a compressed run equals that of its dense twin at every sample to
+      $10^{-16}$ of the standard deviation.
+\item A lossless budgeted TT run equals the budgeted dense twin to round-off.
+\end{itemize}
+The rule is a projection onto the budget-consistent mass and norm. Its closest relatives
+in the literature are projection methods for invariants~\cite{HLW2006} and
+relaxation Runge--Kutta methods~\cite{Ketcheson2019}.
+
+\paragraph{A first test of the rule.} Table~\ref{tab:policies} follows one
+realisation of the Kraichnan flow for one time unit at $\chi=16$, under three ways
+of handling truncation. The variance of the hybrid TT stays within $3\%$ of the
+reference under all three. The standard TT gives three different answers. Under the budget rule its variance
+falls to $38\%$ of the reference, which is what happens if its field carries
+spurious small-scale gradients that are then dissipated physically. Plain
+truncation hides this because each truncation also removes part of those
+gradients. The full runs record the dissipation and the increment statistics
+directly, and will test this reading.
+
+\begin{table}[h]
+\caption{One realisation, Kraichnan $\xi=2$, $256^2$, $\chi=16$, after one time
+unit: $L_2$ error and variance of the TT relative to its dense twin. With the
+variance budget alone the mean drifted by $4\times10^{-4}$ (hybrid) and
+$2\times10^{-2}$ (standard) of the field's standard deviation; with the adopted
+rule the drift is $10^{-16}$.}
+\label{tab:policies}
+\begin{ruledtabular}
+\begin{tabular}{lcccc}
+ & \multicolumn{2}{c}{standard TT ($N=0$)} & \multicolumn{2}{c}{hybrid TT ($N=8$)}\\
+Truncation handling & $L_2$ error & variance ratio & $L_2$ error & variance ratio\\
+\hline
+plain & $0.68$ & $0.86$ & $7.3\times10^{-2}$ & $0.987$\\
+$\theta$ rescaled to its norm before truncation & $0.76$ & $1.24$ & $7.0\times10^{-2}$ & $0.996$\\
+budget rule, mass and variance (adopted) & $0.64$ & $0.38$ & $7.1\times10^{-2}$ & $0.973$\\
+\end{tabular}
+\end{ruledtabular}
+\end{table}
+
+\paragraph{Consequence for earlier runs.} The cellular and DNS campaigns used
+plain truncation. The Kraichnan runs at $256^2$ are being done under both rules,
+and will show how much the rule changes errors and statistics across the whole
+$\chi$ ladder. Whether to rerun the earlier campaigns will be decided on that
+evidence.
+
+% =========================================================================
+\section{The Kraichnan model}
+\label{sec:kraichnan}
+% =========================================================================
+
+\subsection{The idea in words}
+
+In real turbulence the velocity that stirs a scalar is itself the solution of
+the Navier--Stokes equations: expensive to compute and, in a TT, expensive to
+store. Kraichnan's idea~\cite{Kraichnan1968,Kraichnan1994} is to replace it by a
+\emph{random} velocity with two properties.
+\begin{itemize}
+\item \textbf{At each instant it looks turbulent in space.} It is incompressible,
+      Gaussian, and has a prescribed spectrum with a power law. One parameter,
+      $\xi$, sets how rough it is: $\xi=2$ is smooth at all scales of the
+      scalar, and $\xi<2$ is rough, as in a turbulent inertial range.
+\item \textbf{It has no memory.} It is completely renewed from one instant to
+      the next (white in time).
+\end{itemize}
+The scalar stirred by such a velocity behaves like a real turbulent scalar. It
+cascades variance to small scales, develops sharp fronts, and its increments
+are intermittent, with anomalous scaling of the structure functions. These are
+exactly the features the hybrid encoding was designed to preserve.
+
+The absence of memory is what makes the model famous. The equations for the
+second-order statistics close exactly, so the scalar spectrum is known without
+simulation. Higher orders do not close, and their anomalous exponents were the
+first to be derived from first principles~\cite{FGV2001,ShraimanSiggia2000}.
+
+\subsection{Why it is the right next test}
+
+\begin{itemize}
+\item \textbf{The straining is time-dependent.} A frozen 2D velocity is steady,
+      so fluid particles stay on closed streamlines and the stirring cannot
+      become chaotic. The Kraichnan velocity changes at every instant.
+\item \textbf{The velocity costs almost nothing in TT form.} We build it from
+      one plane-wave mode at a time, and a plane wave is an exact rank-2 TT
+      for every head size.
+\item \textbf{The reference is checkable.} Our dense solver must reproduce the
+      exact spectrum, so the reference is validated before any TT run.
+\item \textbf{The roughness is a control parameter.} Comparing $\xi=2$ with
+      $\xi=4/3$ tests how the hybrid advantage depends on the scale content of
+      the stirring.
+\end{itemize}
+
+\subsection{How the velocity is generated on the grid}
+
+A white-in-time velocity cannot be integrated directly. We use the standard
+renewal construction (Fig.~\ref{fig:kraichnan}). Time is cut into short intervals
+of length $\tau$. In each interval the velocity is a single random plane-wave
+mode: its wavevector is drawn with a probability proportional to its share of the
+spectrum, and its phase is uniform. The mode is held fixed during the interval,
+and the scalar is advanced with ordinary sub-steps. At the end of each interval
+the forcing adds a random kick at wavenumber $k\approx3$. The Kubo number
+$\mathrm{Ku}$ measures how far the flow moves the scalar, in units of the mode's
+wavelength, during one interval. As $\mathrm{Ku}\to0$ the construction converges
+to Kraichnan's white-in-time velocity; we use $\mathrm{Ku}=0.5$.
+
+\begin{figure*}[t]
+\centering
+\begin{tikzpicture}[font=\small, >=Latex]
+  \draw[->, thick] (-0.2,0) -- (15.2,0) node[right] {$t$};
+  \foreach \k/\ang/\sp/\lab in {0/20/0.34/0, 1/115/0.22/\tau, 2/60/0.42/2\tau, 3/160/0.28/3\tau, 4/85/0.18/4\tau} {
+    \pgfmathsetmacro{\x}{0.3+3.0*\k}
+    \draw[thick] (\x-0.15,-0.12) -- (\x-0.15,0.12);
+    \node[below, font=\footnotesize] at (\x-0.15,-0.12) {$\lab$};
+    \begin{scope}[shift={(\x+1.35,1.25)}]
+      \fill[blue!5] (-1,-0.85) rectangle (1,0.85);
+      \begin{scope}
+        \clip (-1,-0.85) rectangle (1,0.85);
+        \foreach \j in {-8,...,8} {
+          \draw[blue!45, line width=2.2pt, rotate=\ang] (\j*\sp*2,-3) -- (\j*\sp*2,3);
+        }
+      \end{scope}
+      \draw[thick] (-1,-0.85) rectangle (1,0.85);
+      \draw[<->, very thick, red!70!black, rotate=\ang] (0,-0.6) -- (0,0.6);
+    \end{scope}
+    \draw[thick, orange!80!black] (\x+2.75,0.05) -- (\x+2.75,0.55);
+    \node[star, star points=7, fill=orange!80!black, inner sep=1.3pt] at (\x+2.75,0.62) {};
+  }
+\end{tikzpicture}
+\caption{Renewal construction of the Kraichnan velocity. In each interval of
+length $\tau$ the velocity is one plane-wave mode with random wavevector and
+phase (blue stripes: lines of constant streamfunction; red: the velocity, along
+the stripes), held fixed while the scalar is advanced by ordinary sub-steps.
+Orange: the forcing kick at $k\approx3$ added at the end of each interval. Each mode
+is the discrete curl of a plane-wave streamfunction, so it is exactly
+divergence-free on the grid and an exact rank-2 TT. As $\tau\to0$ at fixed variance per unit time,
+the velocity becomes white in time.}
+\label{fig:kraichnan}
+\end{figure*}
+
+\subsection{Validation of the model}
+
+In the limit $\mathrm{Ku}\to0$ the spectrum of our discrete scheme obeys a closed
+linear equation that we solve exactly on the lattice. Dense runs to $T=200$ at
+$256^2$ and $512^2$ reproduce it (Fig.~\ref{fig:kvalid}).
+\begin{itemize}
+\item \textbf{$\xi=4/3$:} the variance agrees within $0.7\%$ and the inertial
+      range within $2$--$3\%$.
+\item \textbf{$\xi=2$:} the variance is $7\%$ high and the dissipation range up
+      to $30\%$ low. Halving $\mathrm{Ku}$ halves the deviation and halving the
+      time step leaves it unchanged, so it is the finite correlation time of the
+      flow, the expected sensitivity of the smooth (Batchelor) case.
+\end{itemize}
+The TT runs are compared with a dense twin of the same discrete model, so this
+distance from the ideal limit does not enter the TT errors.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.95\linewidth]{figures/kraichnan_validation.png}
+\caption{Dense Kraichnan runs against the exact lattice spectrum (white-noise
+limit). Top: $\xi=2$; bottom: $\xi=4/3$. Left: time-averaged spectra (symbols)
+and theory (lines). Centre: their ratio, for two Kubo numbers and two time
+steps. Right: variance histories, with the theoretical mean dashed.}
+\label{fig:kvalid}
+\end{figure*}
+
+\subsection{What we test, and why}
+
+Table~\ref{tab:ktests} lists the tests. The hybrid runs start from the spun-up
+dense field and use the same random draws as their dense twin. Statistics are
+averaged over the second half of each run.
+
+\begin{table*}[t]
+\caption{The Kraichnan campaign. Grids $256^2$ ($L=8$) and $512^2$ ($L=9$);
+head sizes $N\in\{0,6,8,10\}$ and $\{0,8,10,12\}$ respectively, $N=0$ being the
+standard TT; bond dimensions $\chi$ from $8$ to $128$, excluding values at or above
+the geometric bound, which are lossless.}
+\label{tab:ktests}
+\begin{ruledtabular}
+\begin{tabular}{p{2.5cm}p{4.2cm}p{4.6cm}p{4.5cm}}
+Test & What runs & Question & Why it matters\\
+\hline
+1. Model validation & Dense, $\xi=2$ and $4/3$, $\mathrm{Ku}\in\{0.5,0.25\}$, two time steps, $T=200$ & Does the discrete model reproduce Kraichnan's exact spectrum? & Validates the reference; done (Fig.~\ref{fig:kvalid})\\
+2. Pathwise error & TT vs dense twin, same draws; $T=40$ ($256^2$), $T=20$ ($512^2$) & How does the $L_2$ distance depend on $\rho$, $N$, $\xi$? & First test with straining that changes at every step\\
+3. Statistics & Same runs: $E(k)$, $S_p(r)$, flatness $F(r)$, increment PDFs at $r=1,2,4,8$ & Does the TT keep the statistics even where the pathwise error is large? & The paper's metrics, and the physics we want to study\\
+4. Hybrid vs standard & $N=0$ against the best $N>0$ & What budget saving at fixed error and at fixed statistical accuracy? & The central claim of the encoding, on a flow with known statistics\\
+5. Compression rule & $256^2$, same ladders, plain truncation & How much does the budget rule change errors and statistics? & Decides whether earlier campaigns are rerun\\
+\end{tabular}
+\end{ruledtabular}
+\end{table*}
+
+\subsection{Mathematical details}
+
+\paragraph{Statistics of the velocity.}
+\begin{equation}
+\langle u_i(\mathbf{x},t)\,u_j(\mathbf{x}',t')\rangle = D_{ij}(\mathbf{x}-\mathbf{x}')\,\delta(t-t'),
+\qquad
+D_{ij}(\mathbf{r}) = \sum_{\mathbf{q}\in H} w_q\, e_i(\mathbf{q})e_j(\mathbf{q})\cos(\mathbf{q}\!\cdot\!\mathbf{r}),
+\end{equation}
+where $H$ is a half-plane of integer wavevectors with $1\le|\mathbf{q}|\le q_{\max}$,
+$\mathbf{e}(\mathbf{q})\perp\mathbf{q}$ is the transverse unit vector, and
+$w_q\propto|\mathbf{q}|^{-(2+\xi)}$. The product is interpreted in the
+Stratonovich sense, the limit of smooth velocities with short correlation
+time~\cite{WongZakai1965}. The amplitude is fixed by requiring that the
+eddy-diffusive rate at the forcing wavenumber be one, which sets the unit of time.
+In the inertial-convective range the scalar spectrum is
+$E_\theta(k)\propto k^{\xi-3}$: $k^{-1}$ for $\xi=2$, the Batchelor
+regime~\cite{Batchelor1959}, and $k^{-5/3}$ for $\xi=4/3$. We use
+$q_{\max}=\sqrt2$ for $\xi=2$, a velocity smooth at all scalar scales, and
+$q_{\max}=n/8$ for $\xi=4/3$.
+
+\paragraph{Renewal sampler.} With $s(\mathbf{q})=\sin(\mathbf{q}\Delta x)/\Delta x$
+the discrete wavevector of the centred stencil, mode $\mathbf{q}$ is drawn with
+probability $p_q\propto w_q|s(\mathbf{q})|^2$. Its streamfunction is
+$\psi=b_q\cos(\mathbf{q}\!\cdot\!\mathbf{x}+\phi)$ with uniform phase $\phi$, and the
+velocity amplitude is $a_q=\sqrt{2w_q/(\tau p_q)}$. This choice reproduces
+$D_{ij}$ per unit time and gives every mode the same Kubo number,
+$\mathrm{Ku}=a_q\tau|s(\mathbf{q})|$, so $\tau=\mathrm{Ku}^2/(2Z)$ with
+$Z=\sum_q w_q|s(\mathbf{q})|^2$. The forcing kick is
+$c_k\cos(\mathbf{k}\!\cdot\!\mathbf{x}+\phi')$ with $\mathbf{k}$ in the shell
+$2.5\le|\mathbf{k}|\le3.5$ and $c_k^2=2\tau\varphi_k/p_k$, which fixes the
+injection rate.
+
+\paragraph{The exact lattice spectrum.} Write $C(\mathbf{k})=\langle|\hat\theta_{\mathbf{k}}|^2\rangle$.
+Expanding one interval to second order in $\tau$ and averaging over the random
+mode and phase gives, as $\tau\to0$,
+\begin{equation}
+\frac{dC(\mathbf{k})}{dt} = \sum_{\mathbf{q}} W(\mathbf{q})\,g_{\mathbf{q}}(\mathbf{k},\mathbf{k}-\mathbf{q})^2
+\big[C(\mathbf{k}-\mathbf{q})-C(\mathbf{k})\big] - 2\kappa\lambda(\mathbf{k})\,C(\mathbf{k})
++ \hat\Phi(\mathbf{k}),
+\end{equation}
+with $W(\pm\mathbf{q})=w_q/8$,
+$g_{\mathbf{q}}(\mathbf{k},\mathbf{k}')=\mathbf{e}(\mathbf{q})\!\cdot\![s(\mathbf{k})+s(\mathbf{k}')]$,
+$\lambda$ the symbol of $-\nabla_h^2$, and $\hat\Phi$ the forcing spectrum. The
+transfer term conserves $\sum_{\mathbf{k}}C$, as advection must. The stationary
+solution is found by GMRES. The formula is verified against the brute-force
+double commutator of the actual dense transport operator to $2\times10^{-15}$.
+
+\paragraph{Cost.} The number of sub-steps per interval is set by the largest
+velocity amplitude, $\approx\mathrm{Ku}/(\mathrm{CFL}\,|s_q|\Delta x)$, giving
+about $600$ sub-steps per time unit at $256^2$ and $1200$ at $512^2$. A hybrid
+sub-step costs $50$~ms at $\chi=8$ and $350$~ms at $\chi=32$ ($256^2$), because
+the rank-2 velocity keeps the MPO--MPS products small.
+
+% =========================================================================
+\section{Status and next steps}
+% =========================================================================
+
+\paragraph{Running.}
+\begin{itemize}
+\item \textbf{Kraichnan.} Hybrid runs with the budget rule at $256^2$ and
+      $512^2$, both values of $\xi$, finishing within about a day. The
+      plain-truncation control at $256^2$ has finished.
+\item \textbf{Forced cellular flow at $1024^2$.} The whole sweep has been extended
+      from $T=200$ to $T=600$. The standard TT at $\chi=24$, which looked stable
+      at $T=200$, lost the state afterwards: its $L_2$ error grew from
+      $1.8\times10^{-2}$ to $1.2$. The budget saving at $1024^2$ will be quoted
+      at $T=600$. Most runs end around 27 November; the largest on the long
+      queue, within two weeks.
+\item \textbf{Frozen DNS.} Extension to $\chi=64$, $96$ and $128$, to quote the
+      saving down to $L_2\approx2\times10^{-2}$.
+\end{itemize}
+
+\paragraph{Decisions ahead.}
+\begin{enumerate}[leftmargin=*]
+\item Whether to rerun the cellular and DNS campaigns with the budget rule,
+      once the Kraichnan control quantifies its effect.
+\item Implicit stepping (Crank--Nicolson), which pairs naturally with the
+      budget rule and removes the advective time-step limit. An iterative TT
+      solver (AMEn or ALS) becomes the core operation, with the rule applied at
+      the end of each step.
+\item The production geometry, $4096^2$: a step costs $7.3$~h at $\chi=24$,
+      and the dense reference is cached.
+\item 2D Navier--Stokes in vorticity form. It reuses the whole stack plus a
+      Poisson solve, makes transport nonlinear, and brings two quadratic
+      invariants (energy and enstrophy), to which the budget rule extends
+      directly.
 \end{enumerate}
 
-\paragraph{Beyond the passive scalar.} The natural extension is 2D
-Navier--Stokes in vorticity form,
-$\partial_t\omega + \mathbf{u}\!\cdot\!\nabla\omega = \nu\nabla^2\omega$ with
-$\mathbf{u}$ recovered from $\omega$ by an elliptic solve, which adds a Poisson
-inversion --- a natural fit for the fused/sparse head --- and a second quadratic
-invariant, since 2D conserves both energy and enstrophy and truncation will
-damage them at different rates.
+% =========================================================================
+\section{Corrections to earlier statements}
+% =========================================================================
+
+\begin{itemize}
+\item \textbf{``Do not renormalise after truncation'' is superseded} by the rule
+      of Sec.~\ref{sec:consistency}. The earlier argument was that rescaling
+      moves discarded small-scale variance into the retained scales and hides
+      under-resolution. A single scalar does not change the shape of the
+      retained field, and the removed variance is still logged as $|s-1|$. The
+      decisive point is that plain truncation is itself an unphysical
+      dissipation.
+\item \textbf{``Numerical dissipation is negligible; plain truncation is
+      adequate''} held for the cellular flow at moderate $\chi$. On the
+      Kraichnan flow the variance of the standard TT depends strongly on how
+      truncation is handled (Table~\ref{tab:policies}).
+\item \textbf{The frozen-DNS run is not the ``decisive case''.} It was
+      completed on 18 October; the previous version of this note still listed it
+      as a next step. A steady 2D velocity has closed streamlines and cannot stir
+      chaotically, which is why the Kraichnan model was added.
+\item \textbf{The $1024^2$ saving of $2.5$--$2.8\times$ was measured at
+      $T=200$} and is provisional; see the status above.
+\item \textbf{Lossless configurations were removed.} A bond dimension at or above
+      the geometric bound stores the field exactly at $\rho\ge1$ (for example
+      $N=12$ at $512^2$ with $\chi\ge64$). Such runs carry no information about
+      compression and are now skipped.
+\item Earlier: ``translation is rank-preserving'' and its over-correction; the
+      seam smoother inside the time loop, harmful at every cadence; a
+      truncation-loss diagnostic wrong by four orders of magnitude, because it
+      summed right-hand-side compressions; the advantage first quoted as an
+      error ratio at fixed budget ($7.6$--$90\times$) instead of the budget ratio
+      at fixed accuracy ($1.8$--$2.5\times$); and $4096^2$ wrongly described as
+      out of reach.
+\end{itemize}
+
+\appendix
+
+% =========================================================================
+\section{Implementation and verification}
+% =========================================================================
+
+Everything is built on the public API of \code{tensnet}; no \code{tensnet}
+source is modified and no global state is read. Code lives in
+\code{time\_evolution/}, separate from the paper material.
+\begin{itemize}
+\item \code{hybrid\_ops.py}: hybrid TT algebra. Construction and contraction,
+      truncated SVD with an amplitude tolerance, two-sweep compression with
+      per-bond caps, exact arithmetic and inner products, MPO application
+      through the head, mass projection.
+\item \code{hybrid\_operators.py}: stencils, derivative and Laplacian MPOs,
+      translation, the isotropic seam smoother.
+\item \code{hybrid\_evolve.py}: time steppers, the truncation policy, the
+      physical budgets of mass and variance, the projection, and the budgeted
+      SSPRK3 step (TT and dense),
+      variable-coefficient transport in three forms, velocity from a
+      streamfunction, dense and spectral references, diagnostics.
+\item \code{kraichnan.py}, \code{run\_kraichnan.py}: the model, the sampler,
+      analytic plane-wave TTs, the lattice spectrum, and the run driver. Every
+      sample records the paper's increment statistics for both fields.
+\item Five test suites with about $200$ checks against dense references, all
+      run on the cluster.
+\end{itemize}
+Verified \code{tensnet} traps, none of which raise an error:
+\begin{itemize}
+\item The default 2D layout is not the interleaved one.
+\item Default derivative stencils are 8th order.
+\item MPS arithmetic silently compresses at a global $l_2$ tolerance.
+\item \code{tt.svd} treats \code{eps} as a squared-energy fraction and
+      renormalises by default.
+\item \code{shift\_mpo} is non-periodic with inverted flags.
+\item MPO matrix products cannot handle hybrid shapes.
+\end{itemize}
+
+% =========================================================================
+\section{Earlier findings, for reference}
+% =========================================================================
+
+\begin{itemize}
+\item \textbf{The rank saturates in a genuine cascade.} The intrinsic rank of the
+      dense solution rises during the initial stretching and then plateaus well
+      below the geometric bound. This holds in the cellular flow, decaying and
+      forced, and under the frozen DNS velocity ($315$ at $\epsilon=10^{-6}$ at
+      $512^2$, $61\%$ of the bound).
+\item \textbf{Representation error predicts evolution error.} The evolved error
+      lies $1.5$--$25$ times above the error of compressing the exact field at
+      the same budget for the cellular flow, and up to $233$ times for the DNS
+      velocity. Under the DNS velocity the evolved error is not monotone in
+      $\chi$.
+\item \textbf{Bulk statistics survive rank starvation better than pointwise
+      accuracy.} At a third of the needed rank the variance tracks the
+      reference to about $10^{-3}$, with a pointwise error of a few percent.
+\item \textbf{The forced steady state is a fixed point}, approached on a time
+      $\kappa\tau\simeq0.26$. Runs therefore start from the exact steady state,
+      solved directly.
+\item \textbf{The low-rank structure survives advection.} A translation inflates
+      the rank transiently and restores it exactly after whole coarse blocks.
+\item \textbf{The seam is an artefact of the representation.} Its repair belongs
+      on the output being analysed; inside the time loop it acts as diffusion.
+\item \textbf{The published compressed fields equal plain truncation times one
+      scalar}, verified on the DNS data to $10^{-14}$. Normalised statistics are
+      unaffected.
+\item \textbf{Performance.} The LAPACK backend of the SVD sweeps gave an order of
+      magnitude. The fused dense-head operator does not scale to production
+      $N$.
+\end{itemize}
+
+\begin{thebibliography}{9}
+\bibitem{Kraichnan1968} R.~H. Kraichnan, Small-scale structure of a scalar field
+  convected by turbulence, Phys. Fluids \textbf{11}, 945 (1968).
+\bibitem{Kraichnan1994} R.~H. Kraichnan, Anomalous scaling of a randomly
+  advected passive scalar, Phys. Rev. Lett. \textbf{72}, 1016 (1994).
+\bibitem{FGV2001} G. Falkovich, K. Gaw\c{e}dzki, and M. Vergassola, Particles and
+  fields in fluid turbulence, Rev. Mod. Phys. \textbf{73}, 913 (2001).
+\bibitem{ShraimanSiggia2000} B.~I. Shraiman and E.~D. Siggia, Scalar turbulence,
+  Nature \textbf{405}, 639 (2000).
+\bibitem{Batchelor1959} G.~K. Batchelor, Small-scale variation of convected
+  quantities like temperature in turbulent fluid, J. Fluid Mech. \textbf{5}, 113
+  (1959).
+\bibitem{WongZakai1965} E. Wong and M. Zakai, On the convergence of ordinary
+  integrals to stochastic integrals, Ann. Math. Stat. \textbf{36}, 1560 (1965).
+\bibitem{HLW2006} E. Hairer, C. Lubich, and G. Wanner, \emph{Geometric Numerical
+  Integration}, 2nd ed. (Springer, 2006), Sec.~IV.4.
+\bibitem{Ketcheson2019} D.~I. Ketcheson, Relaxation Runge--Kutta methods:
+  conservation and stability for inner-product norms, SIAM J. Numer. Anal.
+  \textbf{57}, 2850 (2019).
+\end{thebibliography}
 
 \end{document}
